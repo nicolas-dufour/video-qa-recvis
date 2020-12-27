@@ -55,20 +55,12 @@ class VideoQADataset(Dataset):
         self.app_feat_id_to_index = app_feat_id_to_index
         self.motion_feat_id_to_index = motion_feat_id_to_index
 
-        if not np.any(ans_candidates):
-            self.question_type = 'openended'
-        else:
-            self.question_type = 'mulchoices'
-            self.all_ans_candidates = torch.LongTensor(np.asarray(ans_candidates))
-            self.all_ans_candidates_len = torch.LongTensor(np.asarray(ans_candidates_len))
 
     def __getitem__(self, index):
         answer = self.all_answers[index] if self.all_answers is not None else None
         ans_candidates = torch.zeros(5)
         ans_candidates_len = torch.zeros(5)
-        if self.question_type == 'mulchoices':
-            ans_candidates = self.all_ans_candidates[index]
-            ans_candidates_len = self.all_ans_candidates_len[index]
+
         question = self.all_questions[index]
         question_len = self.all_questions_len[index]
         video_idx = self.all_video_ids[index].item()
@@ -90,7 +82,6 @@ class VideoQADataset(Dataset):
 
 
 class VideoQADataLoader(DataLoader):
-
     def __init__(self, **kwargs):
         vocab_json_path = str(kwargs.pop('vocab_json'))
         print('loading vocab from %s' % (vocab_json_path))
@@ -109,9 +100,6 @@ class VideoQADataLoader(DataLoader):
             glove_matrix = obj['glove']
             ans_candidates = np.zeros(5)
             ans_candidates_len = np.zeros(5)
-            if question_type in ['action', 'transition']:
-                ans_candidates = obj['ans_candidates']
-                ans_candidates_len = obj['ans_candidates_len']
 
         if 'train_num' in kwargs:
             trained_num = kwargs.pop('train_num')
@@ -121,9 +109,6 @@ class VideoQADataLoader(DataLoader):
                 video_ids = video_ids[:trained_num]
                 q_ids = q_ids[:trained_num]
                 answers = answers[:trained_num]
-                if question_type in ['action', 'transition']:
-                    ans_candidates = ans_candidates[:trained_num]
-                    ans_candidates_len = ans_candidates_len[:trained_num]
         if 'val_num' in kwargs:
             val_num = kwargs.pop('val_num')
             if val_num > 0:
@@ -132,9 +117,6 @@ class VideoQADataLoader(DataLoader):
                 video_ids = video_ids[:val_num]
                 q_ids = q_ids[:val_num]
                 answers = answers[:val_num]
-                if question_type in ['action', 'transition']:
-                    ans_candidates = ans_candidates[:val_num]
-                    ans_candidates_len = ans_candidates_len[:val_num]
         if 'test_num' in kwargs:
             test_num = kwargs.pop('test_num')
             if test_num > 0:
@@ -143,9 +125,6 @@ class VideoQADataLoader(DataLoader):
                 video_ids = video_ids[:test_num]
                 q_ids = q_ids[:test_num]
                 answers = answers[:test_num]
-                if question_type in ['action', 'transition']:
-                    ans_candidates = ans_candidates[:test_num]
-                    ans_candidates_len = ans_candidates_len[:test_num]
 
         print('loading appearance feature from %s' % (kwargs['appearance_feat']))
         with h5py.File(kwargs['appearance_feat'], 'r') as app_features_file:
