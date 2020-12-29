@@ -89,7 +89,7 @@ class VideoQADataLoader(DataLoader):
 
         question_pt_path = str(kwargs.pop('question_pt'))
         print('loading questions from %s' % (question_pt_path))
-        question_type = kwargs.pop('question_type')
+
         with open(question_pt_path, 'rb') as f:
             obj = pickle.load(f)
             questions = obj['questions']
