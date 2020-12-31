@@ -72,7 +72,7 @@ class CRN(Module):
     
 class CRNDropout(Module):
     def __init__(self, module_dim, num_objects, max_subset_size, gating=False, spl_resolution=1):
-        super(CRN, self).__init__()
+        super(CRNDropout, self).__init__()
         self.module_dim = module_dim
         self.gating = gating
         dropout_proba = 0.15

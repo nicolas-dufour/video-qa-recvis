@@ -290,7 +290,7 @@ class HCRNNetwork(nn.Module):
 
 class InputUnitVisualDropout(nn.Module):
     def __init__(self, k_max_frame_level, k_max_clip_level, spl_resolution, vision_dim, module_dim=512):
-        super(InputUnitVisual, self).__init__()
+        super(InputUnitVisualDropout, self).__init__()
 
         self.clip_level_motion_cond =  CRNDropout(module_dim, k_max_frame_level, k_max_frame_level, gating=False, spl_resolution=spl_resolution)
         self.clip_level_question_cond = CRNDropout(module_dim, k_max_frame_level-2, k_max_frame_level-2, gating=True, spl_resolution=spl_resolution)
@@ -353,7 +353,7 @@ class InputUnitVisualDropout(nn.Module):
     
 class HCRNNetworkDropout(nn.Module):
     def __init__(self, vision_dim, module_dim, word_dim, k_max_frame_level, k_max_clip_level, spl_resolution, vocab, question_type):
-        super(HCRNNetwork, self).__init__()
+        super(HCRNNetworkDropout, self).__init__()
 
         self.question_type = question_type
         self.feature_aggregation = FeatureAggregation(module_dim)
