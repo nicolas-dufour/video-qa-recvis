@@ -86,7 +86,7 @@ class CRNDropout(Module):
             self.k_objects_fusion_dropout.append(nn.Dropout(dropout_proba))
             if self.gating:
                 self.gate_k_objects_fusion.append(nn.Linear(2 * module_dim, module_dim))
-                self.gate_k_objects_fusion.append(nn.Dropout(dropout_proba))
+                self.gate_k_objects_fusion_dropout.append(nn.Dropout(dropout_proba))
         self.spl_resolution = spl_resolution
         self.activation = nn.ELU()
         self.max_subset_size = max_subset_size
