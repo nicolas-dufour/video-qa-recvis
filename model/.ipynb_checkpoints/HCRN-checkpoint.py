@@ -160,18 +160,81 @@ class OutputUnitOpenEnded(nn.Module):
 
         return out
 
+
+class OutputUnitMultiChoices(nn.Module):
+    def __init__(self, module_dim=512):
+        super(OutputUnitMultiChoices, self).__init__()
+
+        self.question_proj = nn.Linear(module_dim, module_dim)
+
+        self.ans_candidates_proj = nn.Linear(module_dim, module_dim)
+
+        self.classifier = nn.Sequential(nn.Dropout(0.15),
+                                        nn.Linear(module_dim * 4, module_dim),
+                                        nn.ELU(),
+                                        nn.BatchNorm1d(module_dim),
+                                        nn.Dropout(0.15),
+                                        nn.Linear(module_dim, 1))
+
+    def forward(self, question_embedding, q_visual_embedding, ans_candidates_embedding,
+                a_visual_embedding):
+        question_embedding = self.question_proj(question_embedding)
+        ans_candidates_embedding = self.ans_candidates_proj(ans_candidates_embedding)
+        out = torch.cat([q_visual_embedding, question_embedding, a_visual_embedding,
+                         ans_candidates_embedding], 1)
+        out = self.classifier(out)
+
+        return out
+
+
+class OutputUnitCount(nn.Module):
+    def __init__(self, module_dim=512):
+        super(OutputUnitCount, self).__init__()
+
+        self.question_proj = nn.Linear(module_dim, module_dim)
+
+        self.regression = nn.Sequential(nn.Dropout(0.15),
+                                        nn.Linear(module_dim * 2, module_dim),
+                                        nn.ELU(),
+                                        nn.BatchNorm1d(module_dim),
+                                        nn.Dropout(0.15),
+                                        nn.Linear(module_dim, 1))
+
+    def forward(self, question_embedding, visual_embedding):
+        question_embedding = self.question_proj(question_embedding)
+        out = torch.cat([visual_embedding, question_embedding], 1)
+        out = self.regression(out)
+
+        return out
+
+
 class HCRNNetwork(nn.Module):
-    def __init__(self, vision_dim, module_dim, word_dim, k_max_frame_level, k_max_clip_level, spl_resolution, vocab):
+    def __init__(self, vision_dim, module_dim, word_dim, k_max_frame_level, k_max_clip_level, spl_resolution, vocab, question_type):
         super(HCRNNetwork, self).__init__()
 
+        self.question_type = question_type
         self.feature_aggregation = FeatureAggregation(module_dim)
 
-        encoder_vocab_size = len(vocab['question_token_to_idx'])
-        self.num_classes = len(vocab['answer_token_to_idx'])
-        self.linguistic_input_unit = InputUnitLinguistic(vocab_size=encoder_vocab_size, wordvec_dim=word_dim,
-                                                            module_dim=module_dim, rnn_dim=module_dim)
-        self.visual_input_unit = InputUnitVisual(k_max_frame_level=k_max_frame_level, k_max_clip_level=k_max_clip_level, spl_resolution=spl_resolution, vision_dim=vision_dim, module_dim=module_dim)
-        self.output_unit = OutputUnitOpenEnded(num_answers=self.num_classes)
+        if self.question_type in ['action', 'transition']:
+            encoder_vocab_size = len(vocab['question_answer_token_to_idx'])
+            self.linguistic_input_unit = InputUnitLinguistic(vocab_size=encoder_vocab_size, wordvec_dim=word_dim,
+                                                             module_dim=module_dim, rnn_dim=module_dim)
+            self.visual_input_unit = InputUnitVisual(k_max_frame_level=k_max_frame_level, k_max_clip_level=k_max_clip_level, spl_resolution=spl_resolution, vision_dim=vision_dim, module_dim=module_dim)
+            self.output_unit = OutputUnitMultiChoices(module_dim=module_dim)
+
+        elif self.question_type == 'count':
+            encoder_vocab_size = len(vocab['question_token_to_idx'])
+            self.linguistic_input_unit = InputUnitLinguistic(vocab_size=encoder_vocab_size, wordvec_dim=word_dim,
+                                                             module_dim=module_dim, rnn_dim=module_dim)
+            self.visual_input_unit = InputUnitVisual(k_max_frame_level=k_max_frame_level, k_max_clip_level=k_max_clip_level, spl_resolution=spl_resolution, vision_dim=vision_dim, module_dim=module_dim)
+            self.output_unit = OutputUnitCount(module_dim=module_dim)
+        else:
+            encoder_vocab_size = len(vocab['question_token_to_idx'])
+            self.num_classes = len(vocab['answer_token_to_idx'])
+            self.linguistic_input_unit = InputUnitLinguistic(vocab_size=encoder_vocab_size, wordvec_dim=word_dim,
+                                                             module_dim=module_dim, rnn_dim=module_dim)
+            self.visual_input_unit = InputUnitVisual(k_max_frame_level=k_max_frame_level, k_max_clip_level=k_max_clip_level, spl_resolution=spl_resolution, vision_dim=vision_dim, module_dim=module_dim)
+            self.output_unit = OutputUnitOpenEnded(num_answers=self.num_classes)
 
         init_modules(self.modules(), w_init="xavier_uniform")
         nn.init.uniform_(self.linguistic_input_unit.encoder_embed.weight, -1.0, 1.0)
@@ -190,12 +253,31 @@ class HCRNNetwork(nn.Module):
             logits.
         """
         batch_size = question.size(0)
-        # get image, word, and sentence embeddings
-        question_embedding = self.linguistic_input_unit(question, question_len)
-        visual_embedding = self.visual_input_unit(video_appearance_feat, video_motion_feat, question_embedding)
+        if self.question_type in ['frameqa', 'count', 'none']:
+            # get image, word, and sentence embeddings
+            question_embedding = self.linguistic_input_unit(question, question_len)
+            visual_embedding = self.visual_input_unit(video_appearance_feat, video_motion_feat, question_embedding)
 
-        visual_embedding = self.feature_aggregation(question_embedding, visual_embedding)
+            visual_embedding = self.feature_aggregation(question_embedding, visual_embedding)
 
-        out = self.output_unit(question_embedding, visual_embedding)
+            out = self.output_unit(question_embedding, visual_embedding)
+        else:
+            question_embedding = self.linguistic_input_unit(question, question_len)
+            visual_embedding = self.visual_input_unit(video_appearance_feat, video_motion_feat, question_embedding)
 
+            q_visual_embedding = self.feature_aggregation(question_embedding, visual_embedding)
+
+            # ans_candidates: (batch_size, num_choices, max_len)
+            ans_candidates_agg = ans_candidates.view(-1, ans_candidates.size(2))
+            ans_candidates_len_agg = ans_candidates_len.view(-1)
+
+            batch_agg = np.reshape(
+                np.tile(np.expand_dims(np.arange(batch_size), axis=1), [1, 5]), [-1])
+
+            ans_candidates_embedding = self.linguistic_input_unit(ans_candidates_agg, ans_candidates_len_agg)
+
+            a_visual_embedding = self.feature_aggregation(ans_candidates_embedding, visual_embedding[batch_agg])
+            out = self.output_unit(question_embedding[batch_agg], q_visual_embedding[batch_agg],
+                                   ans_candidates_embedding,
+                                   a_visual_embedding)
         return out
