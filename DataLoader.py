@@ -27,7 +27,7 @@ import h5py
 from torch.utils.data import Dataset, DataLoader
 
 
-class VideoQADataset(Dataset):
+class VideoQADatasetGlove(Dataset):
 
     def __init__(self, answers, ans_candidates, ans_candidates_len, questions, questions_len, video_ids, q_ids,
                  app_feature_h5, app_feat_id_to_index, motion_feature_h5, motion_feat_id_to_index):
@@ -76,7 +76,7 @@ class VideoQADataset(Dataset):
         return len(self.all_questions)
 
 
-class VideoQADataLoader(DataLoader):
+class VideoQADataLoaderGlove(DataLoader):
 
     def __init__(self, **kwargs):
         question_pt_path = str(kwargs.pop('question_pt'))
@@ -108,6 +108,90 @@ class VideoQADataLoader(DataLoader):
         self.dataset = VideoQADataset(answers, ans_candidates, ans_candidates_len, questions, questions_len,
                                       video_ids, q_ids,
                                       self.app_feature_h5, app_feat_id_to_index, self.motion_feature_h5,
+                                      motion_feat_id_to_index)
+
+        self.batch_size = kwargs['batch_size']
+
+        super().__init__(self.dataset, **kwargs)
+
+    def __len__(self):
+        return math.ceil(len(self.dataset) / self.batch_size)
+    
+
+#### Original Code
+
+class VideoQADatasetBert(Dataset):
+
+    def __init__(self, questions_dataset,app_feature_h5, app_feat_id_to_index, motion_feature_h5, motion_feat_id_to_index):
+        # convert data to tensor
+        self.questions_dataset = questions_dataset
+        self.app_feature_h5 = app_feature_h5
+        self.motion_feature_h5 = motion_feature_h5
+        self.app_feat_id_to_index = app_feat_id_to_index
+        self.motion_feat_id_to_index = motion_feat_id_to_index
+        
+    def __getitem__(self, index):
+        answer = self.questions_dataset[index]['answer_token']
+        ans_candidates = torch.zeros(5)
+        ans_candidates_len = torch.zeros(5)
+        
+        question_tokens = torch.LongTensor(self.questions_dataset[index]['question_tokens'])
+        question_attention_masks = torch.LongTensor(self.questions_dataset[index]['question_attention_mask'])
+        question_token_type_ids = torch.LongTensor(self.questions_dataset[index]['question_token_type_ids'])
+        
+        video_idx = self.questions_dataset[index]['video_ id']
+        question_idx = self.questions_dataset[index]['id']
+        
+        app_index = self.app_feat_id_to_index[str(video_idx)]
+        motion_index = self.motion_feat_id_to_index[str(video_idx)]
+        
+        with h5py.File(self.app_feature_h5, 'r') as f_app:
+            appearance_feat = f_app['resnet_features'][app_index]  # (8, 16, 2048)
+        with h5py.File(self.motion_feature_h5, 'r') as f_motion:
+            motion_feat = f_motion['resnext_features'][motion_index]  # (8, 2048)
+        appearance_feat = torch.from_numpy(appearance_feat)
+        motion_feat = torch.from_numpy(motion_feat)
+        return (
+            video_idx, question_idx, answer, ans_candidates, ans_candidates_len, appearance_feat, motion_feat, question_tokens,question_attention_masks,question_token_type_ids)
+
+    def __len__(self):
+        return len(self.all_questions)
+
+
+class VideoQADataLoaderBert(DataLoader):
+
+    def __init__(self, **kwargs):
+        question_pt_path = str(kwargs.pop('question_pt'))
+        print('loading questions from %s' % (question_pt_path))
+        question_type = kwargs.pop('question_type')
+        with open(question_pt_path, 'rb') as f:
+            obj = pickle.load(f)
+            questions = obj['questions']
+            questions_len = obj['questions_len']
+            video_ids = obj['video_ids']
+            q_ids = obj['question_id']
+            answers = obj['answers']
+            ans_candidates = np.zeros(5)
+            ans_candidates_len = np.zeros(5)
+            if question_type in ['action', 'transition']:
+                ans_candidates = obj['ans_candidates']
+                ans_candidates_len = obj['ans_candidates_len']
+
+        print('loading appearance feature from %s' % (kwargs['appearance_feat']))
+        with h5py.File(kwargs['appearance_feat'], 'r') as app_features_file:
+            app_video_ids = app_features_file['ids'][()]
+        app_feat_id_to_index = {str(id): i for i, id in enumerate(app_video_ids)}
+        print('loading motion feature from %s' % (kwargs['motion_feat']))
+        with h5py.File(kwargs['motion_feat'], 'r') as motion_features_file:
+            motion_video_ids = motion_features_file['ids'][()]
+        motion_feat_id_to_index = {str(id): i for i, id in enumerate(motion_video_ids)}
+        self.app_feature_h5 = kwargs.pop('appearance_feat')
+        self.motion_feature_h5 = kwargs.pop('motion_feat')
+        
+        self.dataset = VideoQADataset(questions_dataset,
+                                      self.app_feature_h5, 
+                                      app_feat_id_to_index, 
+                                      self.motion_feature_h5,
                                       motion_feat_id_to_index)
 
         self.batch_size = kwargs['batch_size']
