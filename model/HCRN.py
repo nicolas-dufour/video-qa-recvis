@@ -1,5 +1,6 @@
 import numpy as np
 from torch.nn import functional as F
+from transformers import BertModel
 
 from .utils import *
 from .CRN import CRN, CRNDropout
@@ -37,9 +38,9 @@ class FeatureAggregation(nn.Module):
         return v_distill
 
 
-class InputUnitLinguistic(nn.Module):
+class InputUnitLinguisticGlove(nn.Module):
     def __init__(self, vocab_size, wordvec_dim=300, rnn_dim=512, module_dim=512, bidirectional=True):
-        super(InputUnitLinguistic, self).__init__()
+        super(InputUnitLinguisticGlove, self).__init__()
 
         self.dim = module_dim
 
@@ -209,7 +210,7 @@ class OutputUnitCount(nn.Module):
         return out
 
 
-class HCRNNetwork(nn.Module):
+class HCRNNetworkGlove(nn.Module):
     def __init__(self, vision_dim, module_dim, word_dim, k_max_frame_level, k_max_clip_level, spl_resolution, vocab, question_type):
         super(HCRNNetwork, self).__init__()
 
@@ -218,21 +219,21 @@ class HCRNNetwork(nn.Module):
 
         if self.question_type in ['action', 'transition']:
             encoder_vocab_size = len(vocab['question_answer_token_to_idx'])
-            self.linguistic_input_unit = InputUnitLinguistic(vocab_size=encoder_vocab_size, wordvec_dim=word_dim,
+            self.linguistic_input_unit = InputUnitLinguisticGlove(vocab_size=encoder_vocab_size, wordvec_dim=word_dim,
                                                              module_dim=module_dim, rnn_dim=module_dim)
             self.visual_input_unit = InputUnitVisual(k_max_frame_level=k_max_frame_level, k_max_clip_level=k_max_clip_level, spl_resolution=spl_resolution, vision_dim=vision_dim, module_dim=module_dim)
             self.output_unit = OutputUnitMultiChoices(module_dim=module_dim)
 
         elif self.question_type == 'count':
             encoder_vocab_size = len(vocab['question_token_to_idx'])
-            self.linguistic_input_unit = InputUnitLinguistic(vocab_size=encoder_vocab_size, wordvec_dim=word_dim,
+            self.linguistic_input_unit = InputUnitLinguisticGlove(vocab_size=encoder_vocab_size, wordvec_dim=word_dim,
                                                              module_dim=module_dim, rnn_dim=module_dim)
             self.visual_input_unit = InputUnitVisual(k_max_frame_level=k_max_frame_level, k_max_clip_level=k_max_clip_level, spl_resolution=spl_resolution, vision_dim=vision_dim, module_dim=module_dim)
             self.output_unit = OutputUnitCount(module_dim=module_dim)
         else:
             encoder_vocab_size = len(vocab['question_token_to_idx'])
             self.num_classes = len(vocab['answer_token_to_idx'])
-            self.linguistic_input_unit = InputUnitLinguistic(vocab_size=encoder_vocab_size, wordvec_dim=word_dim,
+            self.linguistic_input_unit = InputUnitLinguisticGlove(vocab_size=encoder_vocab_size, wordvec_dim=word_dim,
                                                              module_dim=module_dim, rnn_dim=module_dim)
             self.visual_input_unit = InputUnitVisual(k_max_frame_level=k_max_frame_level, k_max_clip_level=k_max_clip_level, spl_resolution=spl_resolution, vision_dim=vision_dim, module_dim=module_dim)
             self.output_unit = OutputUnitOpenEnded(num_answers=self.num_classes,module_dim=module_dim)
@@ -287,3 +288,117 @@ class HCRNNetwork(nn.Module):
 
 
 ###### ORIGINAL CODE #######
+
+class InputUnitLinguisticBert(nn.Module):
+    def __init__(self,module_dim=512, bert_path = 'bert-base-uncased', train_bert = False, mult_embedding=False):
+        super(InputUnitLinguisticBert, self).__init__()
+
+        self.module_dim = module_dim
+        self.bert_dim = 768
+        self.train_bert = train_bert
+        self.mult_embedding = mult_embedding
+
+        self.bert = BertModel.from_pretrained('bert-base-uncased',output_hidden_states=True) 
+        self.bert_dim = self.bert.encoder.layer[-1].dense.out_features
+        self.bert.pooler = nn.Identity()
+        
+        if(mult_embedding):
+            self.embedding = nn.Linear(4*self.bert_dim,self.module_dim)
+        else:
+            self.embedding = nn.Linear(self.bert_dim,self.module_dim)
+            
+        self.embedding_dropout = nn.Dropout(0.15)
+        self.embedding_relu = nn.ReLU()
+
+
+    def forward(self, questions_input_ids, question_attention_mask, question_token_type_ids):
+        """
+        Args:
+            question: [Tensor] (batch_size, max_question_length)
+            question_len: [Tensor] (batch_size)
+        return:
+            question representation [Tensor] (batch_size, module_dim)
+        """
+        data = {'input_ids':questions_input_ids,'attention_mask':question_attention_mask,'token_type_ids':question_token_type_ids}
+        if(self.train_bert):
+            bert_output = self.bert(**data)
+        else:
+            with torch.no_grad():
+                bert_output = self.bert(**data)
+        hidden_states = bert_output[2]
+        if(self.mult_embedding):
+            question_embedding = torch.mean(hidden_states[-1], dim=1)
+        else:
+            last_four_layers = [hidden_states[i] for i in (-1, -2, -3, -4)]
+            cat_hidden_states = torch.cat(tuple(last_four_layers), dim=-1)
+            question_embedding = torch.mean(cat_hidden_states, dim=1)
+        question_embedding = self.embedding(question_embedding)
+        question_embedding = self.embedding_relu(self.embedding_dropout(question_embedding))
+        return question_embedding
+
+class HCRNNetworkBert(nn.Module):
+    def __init__(self, vision_dim, module_dim, bert_path = 'bert-base-uncased', train_bert = False, mult_embedding=False, k_max_frame_level, k_max_clip_level, spl_resolution, vocab, question_type):
+        super(HCRNNetwork, self).__init__()
+
+        self.question_type = question_type
+        self.feature_aggregation = FeatureAggregation(module_dim)
+
+        if self.question_type in ['action', 'transition']:
+            self.linguistic_input_unit = InputUnitLinguisticBert(bert_path = bert_path, train_bert = train_bert, mult_embedding = mult_embedding)
+            self.visual_input_unit = InputUnitVisual(k_max_frame_level=k_max_frame_level, k_max_clip_level=k_max_clip_level, spl_resolution=spl_resolution, vision_dim=vision_dim, module_dim=module_dim)
+            self.output_unit = OutputUnitMultiChoices(module_dim=module_dim)
+
+        elif self.question_type == 'count':
+            self.linguistic_input_unit = InputUnitLinguisticBert(bert_path = bert_path, train_bert = train_bert, mult_embedding = mult_embedding)
+            self.visual_input_unit = InputUnitVisual(k_max_frame_level=k_max_frame_level, k_max_clip_level=k_max_clip_level, spl_resolution=spl_resolution, vision_dim=vision_dim, module_dim=module_dim)
+            self.output_unit = OutputUnitCount(module_dim=module_dim)
+        else:
+            self.num_classes = len(vocab['answer_token_to_idx'])
+            self.linguistic_input_unit = InputUnitLinguisticBert(bert_path = bert_path, train_bert = train_bert, mult_embedding = mult_embedding)
+            self.visual_input_unit = InputUnitVisual(k_max_frame_level=k_max_frame_level, k_max_clip_level=k_max_clip_level, spl_resolution=spl_resolution, vision_dim=vision_dim, module_dim=module_dim)
+            self.output_unit = OutputUnitOpenEnded(num_answers=self.num_classes,module_dim=module_dim)
+
+        init_modules(self.modules(), w_init="xavier_uniform")
+
+    def forward(self, ans_candidates, ans_candidates_len, video_appearance_feat, video_motion_feat,
+                question_tokens,question_attention_masks,question_token_type_ids):
+        """
+        Args:
+            ans_candidates: [Tensor] (batch_size, 5, max_ans_candidates_length)
+            ans_candidates_len: [Tensor] (batch_size, 5)
+            video_appearance_feat: [Tensor] (batch_size, num_clips, num_frames, visual_inp_dim)
+            video_motion_feat: [Tensor] (batch_size, num_clips, visual_inp_dim)
+            question: [Tensor] (batch_size, max_question_length)
+            question_len: [Tensor] (batch_size)
+        return:
+            logits.
+        """
+        batch_size = question.size(0)
+        if self.question_type in ['frameqa', 'count', 'none']:
+            # get image, word, and sentence embeddings
+            question_embedding = self.linguistic_input_unit(question_tokens,question_attention_masks,question_token_type_ids)
+            visual_embedding = self.visual_input_unit(video_appearance_feat, video_motion_feat, question_embedding)
+
+            visual_embedding = self.feature_aggregation(question_embedding, visual_embedding)
+
+            out = self.output_unit(question_embedding, visual_embedding)
+        else:
+            question_embedding = self.linguistic_input_unit(question_tokens,question_attention_masks,question_token_type_ids)
+            visual_embedding = self.visual_input_unit(video_appearance_feat, video_motion_feat, question_embedding)
+
+            q_visual_embedding = self.feature_aggregation(question_embedding, visual_embedding)
+
+            # ans_candidates: (batch_size, num_choices, max_len)
+            ans_candidates_agg = ans_candidates.view(-1, ans_candidates.size(2))
+            ans_candidates_len_agg = ans_candidates_len.view(-1)
+
+            batch_agg = np.reshape(
+                np.tile(np.expand_dims(np.arange(batch_size), axis=1), [1, 5]), [-1])
+
+            ans_candidates_embedding = self.linguistic_input_unit(ans_candidates_agg, ans_candidates_len_agg)
+
+            a_visual_embedding = self.feature_aggregation(ans_candidates_embedding, visual_embedding[batch_agg])
+            out = self.output_unit(question_embedding[batch_agg], q_visual_embedding[batch_agg],
+                                   ans_candidates_embedding,
+                                   a_visual_embedding)
+        return out

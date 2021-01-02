@@ -2,4 +2,4 @@ data
 wandb
 video-qa-hcrn-recvis
 models_checkpoints
-
+.ipynb_checkpoints
