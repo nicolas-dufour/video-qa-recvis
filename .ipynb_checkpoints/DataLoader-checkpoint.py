@@ -27,19 +27,6 @@ import h5py
 from torch.utils.data import Dataset, DataLoader
 
 
-def invert_dict(d):
-    return {v: k for k, v in d.items()}
-
-
-def load_vocab(path):
-    with open(path, 'r') as f:
-        vocab = json.load(f)
-        vocab['question_idx_to_token'] = invert_dict(vocab['question_token_to_idx'])
-        vocab['answer_idx_to_token'] = invert_dict(vocab['answer_token_to_idx'])
-        vocab['question_answer_idx_to_token'] = invert_dict(vocab['question_answer_token_to_idx'])
-    return vocab
-
-
 class VideoQADataset(Dataset):
 
     def __init__(self, answers, ans_candidates, ans_candidates_len, questions, questions_len, video_ids, q_ids,
@@ -92,10 +79,6 @@ class VideoQADataset(Dataset):
 class VideoQADataLoader(DataLoader):
 
     def __init__(self, **kwargs):
-        vocab_json_path = str(kwargs.pop('vocab_json'))
-        print('loading vocab from %s' % (vocab_json_path))
-        vocab = load_vocab(vocab_json_path)
-
         question_pt_path = str(kwargs.pop('question_pt'))
         print('loading questions from %s' % (question_pt_path))
         question_type = kwargs.pop('question_type')
@@ -106,46 +89,11 @@ class VideoQADataLoader(DataLoader):
             video_ids = obj['video_ids']
             q_ids = obj['question_id']
             answers = obj['answers']
-            glove_matrix = obj['glove']
             ans_candidates = np.zeros(5)
             ans_candidates_len = np.zeros(5)
             if question_type in ['action', 'transition']:
                 ans_candidates = obj['ans_candidates']
                 ans_candidates_len = obj['ans_candidates_len']
-
-        if 'train_num' in kwargs:
-            trained_num = kwargs.pop('train_num')
-            if trained_num > 0:
-                questions = questions[:trained_num]
-                questions_len = questions_len[:trained_num]
-                video_ids = video_ids[:trained_num]
-                q_ids = q_ids[:trained_num]
-                answers = answers[:trained_num]
-                if question_type in ['action', 'transition']:
-                    ans_candidates = ans_candidates[:trained_num]
-                    ans_candidates_len = ans_candidates_len[:trained_num]
-        if 'val_num' in kwargs:
-            val_num = kwargs.pop('val_num')
-            if val_num > 0:
-                questions = questions[:val_num]
-                questions_len = questions_len[:val_num]
-                video_ids = video_ids[:val_num]
-                q_ids = q_ids[:val_num]
-                answers = answers[:val_num]
-                if question_type in ['action', 'transition']:
-                    ans_candidates = ans_candidates[:val_num]
-                    ans_candidates_len = ans_candidates_len[:val_num]
-        if 'test_num' in kwargs:
-            test_num = kwargs.pop('test_num')
-            if test_num > 0:
-                questions = questions[:test_num]
-                questions_len = questions_len[:test_num]
-                video_ids = video_ids[:test_num]
-                q_ids = q_ids[:test_num]
-                answers = answers[:test_num]
-                if question_type in ['action', 'transition']:
-                    ans_candidates = ans_candidates[:test_num]
-                    ans_candidates_len = ans_candidates_len[:test_num]
 
         print('loading appearance feature from %s' % (kwargs['appearance_feat']))
         with h5py.File(kwargs['appearance_feat'], 'r') as app_features_file:
@@ -162,9 +110,7 @@ class VideoQADataLoader(DataLoader):
                                       self.app_feature_h5, app_feat_id_to_index, self.motion_feature_h5,
                                       motion_feat_id_to_index)
 
-        self.vocab = vocab
         self.batch_size = kwargs['batch_size']
-        self.glove_matrix = glove_matrix
 
         super().__init__(self.dataset, **kwargs)
 
