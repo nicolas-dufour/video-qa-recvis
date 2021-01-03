@@ -3,7 +3,7 @@ from torch.nn import functional as F
 from transformers import BertModel
 
 from .utils import *
-from .CRN import CRN, CRNDropout
+from .CRN import CRN
 
 ###### BASE HCRN CODE #######
 
@@ -212,7 +212,7 @@ class OutputUnitCount(nn.Module):
 
 class HCRNNetworkGlove(nn.Module):
     def __init__(self, vision_dim, module_dim, word_dim, k_max_frame_level, k_max_clip_level, spl_resolution, vocab, question_type):
-        super(HCRNNetwork, self).__init__()
+        super(HCRNNetworkGlove, self).__init__()
 
         self.question_type = question_type
         self.feature_aggregation = FeatureAggregation(module_dim)
@@ -294,13 +294,16 @@ class InputUnitLinguisticBert(nn.Module):
         super(InputUnitLinguisticBert, self).__init__()
 
         self.module_dim = module_dim
-        self.bert_dim = 768
         self.train_bert = train_bert
         self.mult_embedding = mult_embedding
 
-        self.bert = BertModel.from_pretrained('bert-base-uncased',output_hidden_states=True) 
-        self.bert_dim = self.bert.encoder.layer[-1].dense.out_features
+        self.bert = BertModel.from_pretrained('bert-base-uncased',output_hidden_states=True)
+        self.bert_dim = self.bert.encoder.layer[-1].output.dense.out_features
         self.bert.pooler = nn.Identity()
+        
+        if(not train_bert):
+            for param in self.bert.parameters():
+                param.requires_grad = False
         
         if(mult_embedding):
             self.embedding = nn.Linear(4*self.bert_dim,self.module_dim)
@@ -320,13 +323,9 @@ class InputUnitLinguisticBert(nn.Module):
             question representation [Tensor] (batch_size, module_dim)
         """
         data = {'input_ids':questions_input_ids,'attention_mask':question_attention_mask,'token_type_ids':question_token_type_ids}
-        if(self.train_bert):
-            bert_output = self.bert(**data)
-        else:
-            with torch.no_grad():
-                bert_output = self.bert(**data)
+        bert_output = self.bert(**data)
         hidden_states = bert_output[2]
-        if(self.mult_embedding):
+        if(not self.mult_embedding):
             question_embedding = torch.mean(hidden_states[-1], dim=1)
         else:
             last_four_layers = [hidden_states[i] for i in (-1, -2, -3, -4)]
@@ -337,8 +336,8 @@ class InputUnitLinguisticBert(nn.Module):
         return question_embedding
 
 class HCRNNetworkBert(nn.Module):
-    def __init__(self, vision_dim, module_dim, bert_path = 'bert-base-uncased', train_bert = False, mult_embedding=False, k_max_frame_level, k_max_clip_level, spl_resolution, vocab, question_type):
-        super(HCRNNetwork, self).__init__()
+    def __init__(self, vision_dim, module_dim, k_max_frame_level, k_max_clip_level, spl_resolution, vocab, question_type, bert_path = 'bert-base-uncased', train_bert = False, mult_embedding=False):
+        super(HCRNNetworkBert, self).__init__()
 
         self.question_type = question_type
         self.feature_aggregation = FeatureAggregation(module_dim)
@@ -373,7 +372,7 @@ class HCRNNetworkBert(nn.Module):
         return:
             logits.
         """
-        batch_size = question.size(0)
+        batch_size = question_tokens.size(0)
         if self.question_type in ['frameqa', 'count', 'none']:
             # get image, word, and sentence embeddings
             question_embedding = self.linguistic_input_unit(question_tokens,question_attention_masks,question_token_type_ids)
