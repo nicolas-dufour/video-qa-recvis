@@ -5,3 +5,4 @@ models_checkpoints
 .ipynb_checkpoints
 runs
 test-clm
+lightning_logs

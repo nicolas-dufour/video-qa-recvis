@@ -32,7 +32,7 @@ def create_vocab(train_annotation_json,vocab_path=None,answer_top=4000):
         answer = instance['answer']
         answer_cnt[answer] = answer_cnt.get(answer, 0) + 1
 
-    answer_token_to_idx = {'[UNK]': 100}
+    answer_token_to_idx = {'<UNK0>': 0, '<UNK1>': 1}
     answer_counter = Counter(answer_cnt)
     frequent_answers = answer_counter.most_common(answer_top)
     total_ans = sum(item[1] for item in answer_counter.items())
@@ -42,7 +42,7 @@ def create_vocab(train_annotation_json,vocab_path=None,answer_top=4000):
     print("Top %i answers account for %f%%" % (len(frequent_answers), total_freq_ans * 100.0 / total_ans))
 
     for token, cnt in Counter(answer_cnt).most_common(answer_top):
-        answer_token_to_idx[token] = tokenizer(token)['input_ids'][1]
+        answer_token_to_idx[token] = len(answer_token_to_idx)
     print('Get answer_token_to_idx, num: %d' % len(answer_token_to_idx))
 
     question_token_to_idx = {'[UNK]': 100,'[CLS]': 101, '[SEP]': 102,'[MASK]':103, '[PAD]':0}
@@ -77,7 +77,6 @@ def process_questions(train_csv, val_csv, test_csv, fine_tune_out_path, train_ou
     tokenized_datasets = load_dataset('csv',delimiter="\t",data_files={'train':train_csv,'val':val_csv,'test':test_csv})
     
     print('Tokenizing questions')
-    
     tokenized_datasets = tokenized_datasets.map(tokenize_function(tokenizer, 'question'),batched=True, remove_columns=["question"])
     model_training_datasets = tokenized_datasets
     

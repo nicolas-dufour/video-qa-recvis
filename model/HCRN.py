@@ -297,7 +297,7 @@ class InputUnitLinguisticBert(nn.Module):
         self.train_bert = train_bert
         self.mult_embedding = mult_embedding
 
-        self.bert = BertModel.from_pretrained('bert-base-uncased',output_hidden_states=True)
+        self.bert = BertModel.from_pretrained(bert_path,output_hidden_states=True)
         self.bert_dim = self.bert.encoder.layer[-1].output.dense.out_features
         self.bert.pooler = nn.Identity()
         
@@ -311,7 +311,7 @@ class InputUnitLinguisticBert(nn.Module):
             self.embedding = nn.Linear(self.bert_dim,self.module_dim)
             
         self.embedding_dropout = nn.Dropout(0.15)
-        self.embedding_relu = nn.ReLU()
+        self.embedding_elu = nn.ELU()
 
 
     def forward(self, questions_input_ids, question_attention_mask, question_token_type_ids):
@@ -332,7 +332,7 @@ class InputUnitLinguisticBert(nn.Module):
             cat_hidden_states = torch.cat(tuple(last_four_layers), dim=-1)
             question_embedding = torch.mean(cat_hidden_states, dim=1)
         question_embedding = self.embedding(question_embedding)
-        question_embedding = self.embedding_relu(self.embedding_dropout(question_embedding))
+        question_embedding = self.embedding_elu(self.embedding_dropout(question_embedding))
         return question_embedding
 
 class HCRNNetworkBert(nn.Module):
