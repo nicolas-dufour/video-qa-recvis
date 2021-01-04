@@ -21,8 +21,6 @@ def tokenize_answer(vocab):
 
 def create_vocab(train_annotation_json,vocab_path=None,answer_top=4000):
     ''' Encode question tokens'''
-    print('Loading tokenizer')
-    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
     print('Loading training data')
     with open(train_annotation_json, 'r') as dataset_file:
         instances_train = json.load(dataset_file)
@@ -45,19 +43,8 @@ def create_vocab(train_annotation_json,vocab_path=None,answer_top=4000):
         answer_token_to_idx[token] = len(answer_token_to_idx)
     print('Get answer_token_to_idx, num: %d' % len(answer_token_to_idx))
 
-    question_token_to_idx = {'[UNK]': 100,'[CLS]': 101, '[SEP]': 102,'[MASK]':103, '[PAD]':0}
-    for i, instance in enumerate(instances_train):
-        question = instance['question'].lower()[:-1]
-        for token in question.split(" "):
-            if token not in question_token_to_idx:
-                question_token_to_idx[token] = tokenizer(token)['input_ids'][1]
-    print('Get question_token_to_idx')
-    print(len(question_token_to_idx))
-
     vocab = {
-        'question_token_to_idx': question_token_to_idx,
         'answer_token_to_idx': answer_token_to_idx,
-        'question_answer_token_to_idx': {'<NULL>': 0, '<UNK>': 1}
     }
     if(vocab_path):
         print('Write into %s' % vocab_path)

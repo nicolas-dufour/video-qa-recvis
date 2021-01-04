@@ -21,6 +21,7 @@
 import numpy as np
 import json
 import pickle
+import pytorch_lightning as pl
 import torch
 import math
 import h5py
@@ -194,3 +195,193 @@ def collate_batch_videoqa_bert(batch):
         
         
     )
+
+def invert_dict(d):
+    return {v: k for k, v in d.items()}
+class VideoQADataModule(pl.LightningDataModule):
+    def __init__(self, data_path,dataset_name,batch_size,text_embedding_method,num_workers =8):
+        super().__init__()
+        
+        self.batch_size = batch_size
+        self.dataset_name = dataset_name
+        if(self.dataset_name == 'msvd-qa' or self.dataset_name == 'msrvtt-qa'):
+            self.question_type = 'none'
+        elif(self.dataset_name == 'tgif-qa_frameqa'):
+            self.question_type = 'frameqa'
+        self.text_embedding_method = text_embedding_method
+        self.num_workers = num_workers
+        
+        self.dataset_path = f"{data_path}/{self.dataset_name}"
+        
+        if(self.text_embedding_method == 'glove'):
+            with open(f"{self.dataset_path}/{self.text_embedding_method}_question_embedding/{self.dataset_name}_train_questions.pt", 'rb') as f:
+                obj = pickle.load(f)
+                glove_matrix = obj['glove']
+            self.glove_matrix = glove_matrix
+        elif(self.text_embedding_method == 'bert'):
+            self.finetuned_bert_path = f"{self.dataset_path}/{self.text_embedding_method}_question_embedding/question_finetuned_model"
+        with open(f"{self.dataset_path}/{self.text_embedding_method}_question_embedding/{self.dataset_name}_vocab_{self.text_embedding_method}.json", 'r') as f:
+            vocab = json.load(f)
+            vocab['question_idx_to_token'] = invert_dict(vocab['question_token_to_idx'])
+            vocab['answer_idx_to_token'] = invert_dict(vocab['answer_token_to_idx'])
+            vocab['question_answer_idx_to_token'] = invert_dict(vocab['question_answer_token_to_idx'])
+        self.vocab = vocab
+        
+    def setup(self):
+        if(self.text_embedding_method == 'glove'):
+            self.question_pt_path = f"{self.dataset_path}/{self.text_embedding_method}_question_embedding/{self.dataset_name}_train_questions.pt"
+            print('loading questions from %s' % (self.question_pt_path))
+            with open(self.question_pt_path, 'rb') as f:
+                obj = pickle.load(f)
+                self.questions = obj['questions']
+                self.questions_len = obj['questions_len']
+                self.video_ids = obj['video_ids']
+                self.questions_ids = obj['question_id']
+                self.answers = obj['answers']
+                self.ans_candidates = torch.zeros(5)
+                self.ans_candidates_len = torch.zeros(5)
+                if self.question_type in ['action', 'transition']:
+                    self.ans_candidates = obj['ans_candidates']
+                    self.ans_candidates_len = obj['ans_candidates_len']
+
+
+            self.app_feature_h5 = f"{self.dataset_path}/{self.dataset_name}_appearance_feat.h5"
+            self.motion_feature_h5 = f"{self.dataset_path}/{self.dataset_name}_motion_feat.h5"
+            print('loading appearance feature from %s' % (self.app_feature_h5))
+            with h5py.File(self.app_feature_h5, 'r') as app_features_file:
+                app_video_ids = app_features_file['ids'][()]
+            self.app_feat_id_to_index = {str(id): i for i, id in enumerate(app_video_ids)}
+            print('loading motion feature from %s' % (self.motion_feature_h5))
+            with h5py.File(self.motion_feature_h5, 'r') as motion_features_file:
+                motion_video_ids = motion_features_file['ids'][()]
+            self.motion_feat_id_to_index = {str(id): i for i, id in enumerate(motion_video_ids)}
+            
+        elif(self.text_embedding_method == 'bert'):
+            self.question_pt_path = f"{self.dataset_path}/{self.text_embedding_method}_question_embedding/{self.dataset_name}_train_questions.pt"
+            print('loading questions from %s' % (self.question_pt_path))
+            with open(self.question_pt_path, 'rb') as f:
+                self.question_dataset = pickle.load(f)
+            self.app_feature_h5 = f"{self.dataset_path}/{self.dataset_name}_appearance_feat.h5"
+            self.motion_feature_h5 = f"{self.dataset_path}/{self.dataset_name}_motion_feat.h5"
+            print('loading appearance feature from %s' % (self.app_feature_h5))
+            with h5py.File(self.app_feature_h5, 'r') as app_features_file:
+                app_video_ids = app_features_file['ids'][()]
+            self.app_feat_id_to_index = {str(id): i for i, id in enumerate(app_video_ids)}
+            print('loading motion feature from %s' % (self.motion_feature_h5))
+            with h5py.File(self.motion_feature_h5, 'r') as motion_features_file:
+                motion_video_ids = motion_features_file['ids'][()]
+            self.motion_feat_id_to_index = {str(id): i for i, id in enumerate(motion_video_ids)}
+        
+    def train_dataloader(self):
+        if(self.text_embedding_method == 'glove'):
+            dataset = VideoQADatasetGlove(
+                self.answers, self.ans_candidates,
+                self.ans_candidates_len, self.questions,
+                self.questions_len,self.video_ids, 
+                self.questions_ids, self.app_feature_h5, 
+                self.app_feat_id_to_index,
+                self.motion_feature_h5,
+                self.motion_feat_id_to_index
+            )
+            
+            return VideoQADataLoaderGlove(
+                    dataset = dataset,
+                    batch_size = self.batch_size,
+                    num_workers = self.num_workers,
+                    shuffle = True,
+                    pin_memory = True
+            )
+        elif(self.text_embedding_method == 'bert'):
+            dataset = VideoQADatasetBert(
+                self.question_dataset,
+                self.app_feature_h5, 
+                self.app_feat_id_to_index, 
+                self.motion_feature_h5,
+                self.motion_feat_id_to_index
+            )
+            return VideoQADataLoaderBert(
+                dataset = dataset,
+                batch_size = self.batch_size,
+                collate_fn = collate_batch_videoqa_bert,
+                num_workers = self.num_workers,
+                shuffle=True,
+                pin_memory = True
+            )
+        else:
+            raise "Text embedding method not supported"
+
+    def val_dataloader(self):
+        if(self.text_embedding_method == 'glove'):
+            dataset = VideoQADatasetGlove(
+                self.answers, self.ans_candidates,
+                self.ans_candidates_len, self.questions,
+                self.questions_len,self.video_ids, 
+                self.questions_ids, self.app_feature_h5, 
+                self.app_feat_id_to_index,
+                self.motion_feature_h5,
+                self.motion_feat_id_to_index
+            )
+            
+            return VideoQADataLoaderGlove(
+                    dataset = dataset,
+                    batch_size = self.batch_size,
+                    num_workers = self.num_workers,
+                    shuffle = True,
+                    pin_memory = True
+            )
+        elif(self.text_embedding_method == 'bert'):
+            dataset = VideoQADatasetBert(
+                self.question_dataset,
+                self.app_feature_h5, 
+                self.app_feat_id_to_index, 
+                self.motion_feature_h5,
+                self.motion_feat_id_to_index
+            )
+            return VideoQADataLoaderBert(
+                dataset = dataset,
+                batch_size = self.batch_size,
+                collate_fn = collate_batch_videoqa_bert,
+                num_workers = self.num_workers,
+                shuffle=False,
+                pin_memory = True
+            )
+        else:
+            raise "Text embedding method not supported"
+
+    def test_dataloader(self):
+        if(self.text_embedding_method == 'glove'):
+            dataset = VideoQADatasetGlove(
+                self.answers, self.ans_candidates,
+                self.ans_candidates_len, self.questions,
+                self.questions_len,self.video_ids, 
+                self.questions_ids, self.app_feature_h5, 
+                self.app_feat_id_to_index,
+                self.motion_feature_h5,
+                self.motion_feat_id_to_index
+            )
+            
+            return VideoQADataLoaderGlove(
+                    dataset = dataset,
+                    batch_size = self.batch_size,
+                    num_workers = self.num_workers,
+                    shuffle = False,
+                    pin_memory = True
+            )
+        elif(self.text_embedding_method == 'bert'):
+            dataset = VideoQADatasetBert(
+                self.question_dataset,
+                self.app_feature_h5, 
+                self.app_feat_id_to_index, 
+                self.motion_feature_h5,
+                self.motion_feat_id_to_index
+            )
+            return VideoQADataLoaderBert(
+                dataset = dataset,
+                batch_size = self.batch_size,
+                collate_fn = collate_batch_videoqa_bert,
+                num_workers = self.num_workers,
+                shuffle=False,
+                pin_memory = True
+            )
+        else:
+            raise "Text embedding method not supported"
