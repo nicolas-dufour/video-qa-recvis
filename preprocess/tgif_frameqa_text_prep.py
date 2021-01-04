@@ -5,6 +5,7 @@ from datasets import load_dataset
 import pickle
 import torch
 import numpy as np
+import pandas as pd
 
 def tokenize_function(tokenizer,column_name):
     def tokenize_function_prim(examples):
