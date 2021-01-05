@@ -112,7 +112,7 @@ class VideoQADatasetBert(Dataset):
         question_attention_masks = torch.LongTensor(self.questions_dataset[index]['question_attention_mask'])
         question_token_type_ids = torch.LongTensor(self.questions_dataset[index]['question_token_type_ids'])
         
-        video_idx = self.questions_dataset[index]['video_id']
+        video_idx = self.questions_dataset[index]['video_ids']
         question_idx = self.questions_dataset[index]['question_id']
         
         app_index = self.app_feat_id_to_index[str(video_idx)]
@@ -209,9 +209,10 @@ class VideoQADataModule(pl.LightningDataModule):
             self.finetuned_bert_path = f"{self.dataset_path}/{self.text_embedding_method}_question_embedding/question_finetuned_model"
         with open(f"{self.dataset_path}/{self.text_embedding_method}_question_embedding/{self.dataset_name}_vocab_{self.text_embedding_method}.json", 'r') as f:
             vocab = json.load(f)
-            vocab['question_idx_to_token'] = invert_dict(vocab['question_token_to_idx'])
             vocab['answer_idx_to_token'] = invert_dict(vocab['answer_token_to_idx'])
-            vocab['question_answer_idx_to_token'] = invert_dict(vocab['question_answer_token_to_idx'])
+            if(self.text_embedding_method == 'glove'):
+                vocab['question_idx_to_token'] = invert_dict(vocab['question_token_to_idx'])
+                vocab['question_answer_idx_to_token'] = invert_dict(vocab['question_answer_token_to_idx'])
         self.vocab = vocab
             
         
@@ -251,11 +252,8 @@ class VideoQADataModule(pl.LightningDataModule):
             print('loading questions from %s' % (self.question_pt_path))
             with open(self.question_pt_path, 'rb') as f:
                 self.question_dataset = pickle.load(f)
-            self.app_feature_h5 = f"{self.dataset_path}/{self.dataset_name}_appearance_feat.h5"
-            self.app_feature_h5 = torch.Tensor(np.array(h5py.File(self.app_feature_h5, 'r')['resnet_features']))
-            
+            self.app_feature_h5 = f"{self.dataset_path}/{self.dataset_name}_appearance_feat.h5"            
             self.motion_feature_h5 = f"{self.dataset_path}/{self.dataset_name}_motion_feat.h5"
-            self.motion_feature_h5 = torch.Tensor(np.array(h5py.File(self.motion_feature_h5, 'r')['resnext_features']))
             print('loading appearance feature from %s' % (self.app_feature_h5))
             with h5py.File(self.app_feature_h5, 'r') as app_features_file:
                 app_video_ids = app_features_file['ids'][()]
@@ -264,7 +262,6 @@ class VideoQADataModule(pl.LightningDataModule):
             with h5py.File(self.motion_feature_h5, 'r') as motion_features_file:
                 motion_video_ids = motion_features_file['ids'][()]
             self.motion_feat_id_to_index = {str(id): i for i, id in enumerate(motion_video_ids)}
-            
         self.app_feature_h5 = torch.Tensor(np.array(h5py.File(self.app_feature_h5, 'r')['resnet_features']))
         self.motion_feature_h5 = torch.Tensor(np.array(h5py.File(self.motion_feature_h5, 'r')['resnext_features']))
     def train_dataloader(self):

@@ -19,6 +19,7 @@ def tokenize_answer(vocab):
         else:
             return {'answer_token':100}
     return tokenize_answer_prim
+
 def split_train_val(train_val_csv,out_train_csv,out_val_csv,train_prop=0.9):
     data = pd.read_csv(train_val_csv,sep='\t')
     split = int(train_prop * len(data))
