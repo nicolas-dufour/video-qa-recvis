@@ -19,6 +19,15 @@ def tokenize_answer(vocab):
         else:
             return {'answer_token':100}
     return tokenize_answer_prim
+def split_train_val(train_val_csv,out_train_csv,out_val_csv,train_prop=0.9):
+    data = pd.read_csv(train_val_csv,sep='\t')
+    split = int(train_prop * len(data))
+    data_train = data[:split].reset_index()
+    data_val = data[split:].reset_index()
+    del data_train['index']
+    del data_val['index']
+    data_train.to_csv(out_train_csv,sep='\t',index_label='id')
+    data_val.to_csv(out_val_csv,sep='\t',index_label='id')
 
 def create_vocab(train_csv,vocab_path=None,answer_top=4000):
     ''' Encode question tokens'''
@@ -80,15 +89,16 @@ def process_questions(train_csv, val_csv, test_csv, fine_tune_out_path, train_ou
     tokenized_datasets = tokenized_datasets.map(tokenize_answer(vocab),batched=False, remove_columns=["answer"])
     
     print('Renaming fields')
-    
     tokenized_datasets = tokenized_datasets.map(
         lambda instance : {
             'question_id': instance['id'],
+            'video_ids': instance['key'],
+            'video_name': instance['gif_name'],
             'question_tokens': instance['input_ids'],
             'question_attention_mask': instance['attention_mask'],
             'question_token_type_ids': instance['token_type_ids']},
         batched=True,
-        remove_columns=['id','input_ids','attention_mask','token_type_ids'])
+        remove_columns=['id','input_ids','attention_mask','token_type_ids','description','key','type','vid_id'])
     
     print('Saving datasets')
     

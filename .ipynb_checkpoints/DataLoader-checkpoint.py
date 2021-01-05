@@ -43,8 +43,8 @@ class VideoQADatasetGlove(Dataset):
         self.motion_feature_h5 = motion_feature_h5
         self.app_feat_id_to_index = app_feat_id_to_index
         self.motion_feat_id_to_index = motion_feat_id_to_index
-        self.f_app = None
-        self.f_motion = None
+        self.f_app = app_feature_h5
+        self.f_motion = motion_feature_h5
 
         if torch.all(ans_candidates==0):
             self.question_type = 'openended'
@@ -66,16 +66,10 @@ class VideoQADatasetGlove(Dataset):
         question_idx = self.all_q_ids[index]
         app_index = self.app_feat_id_to_index[str(video_idx)]
         motion_index = self.motion_feat_id_to_index[str(video_idx)]
-        if self.f_app is None:
-            self.f_app = h5py.File(self.app_feature_h5, 'r')['resnet_features']
-        if self.f_motion is None:
-            self.f_motion = h5py.File(self.motion_feature_h5, 'r')['resnext_features']
         
         appearance_feat = self.f_app[app_index]  # (8, 16, 2048)
         motion_feat = self.f_motion[motion_index]  # (8, 2048)
         
-        appearance_feat = torch.from_numpy(appearance_feat)
-        motion_feat = torch.from_numpy(motion_feat)
         return (
             video_idx, question_idx, answer, ans_candidates, ans_candidates_len, appearance_feat, motion_feat, question,
             question_len)
@@ -107,8 +101,8 @@ class VideoQADatasetBert(Dataset):
         self.motion_feature_h5 = motion_feature_h5
         self.app_feat_id_to_index = app_feat_id_to_index
         self.motion_feat_id_to_index = motion_feat_id_to_index
-        self.f_app = None
-        self.f_motion = None
+        self.f_app = app_feature_h5
+        self.f_motion = motion_feature_h5
         
     def __getitem__(self, index):
         answer = self.questions_dataset[index]['answer_token']
@@ -124,16 +118,9 @@ class VideoQADatasetBert(Dataset):
         app_index = self.app_feat_id_to_index[str(video_idx)]
         motion_index = self.motion_feat_id_to_index[str(video_idx)]
         
-        if self.f_app is None:
-            self.f_app = h5py.File(self.app_feature_h5, 'r')['resnet_features']
-        if self.f_motion is None:
-            self.f_motion = h5py.File(self.motion_feature_h5, 'r')['resnext_features']
-        
         appearance_feat = self.f_app[app_index]  # (8, 16, 2048)
         motion_feat = self.f_motion[motion_index]  # (8, 2048)
         
-        appearance_feat = torch.from_numpy(appearance_feat)
-        motion_feat = torch.from_numpy(motion_feat)
         return (
             video_idx, question_idx,
             answer, ans_candidates,
@@ -226,8 +213,9 @@ class VideoQADataModule(pl.LightningDataModule):
             vocab['answer_idx_to_token'] = invert_dict(vocab['answer_token_to_idx'])
             vocab['question_answer_idx_to_token'] = invert_dict(vocab['question_answer_token_to_idx'])
         self.vocab = vocab
+            
         
-    def setup(self):
+    def prepare_data(self):
         if(self.text_embedding_method == 'glove'):
             self.question_pt_path = f"{self.dataset_path}/{self.text_embedding_method}_question_embedding/{self.dataset_name}_train_questions.pt"
             print('loading questions from %s' % (self.question_pt_path))
@@ -246,7 +234,9 @@ class VideoQADataModule(pl.LightningDataModule):
 
 
             self.app_feature_h5 = f"{self.dataset_path}/{self.dataset_name}_appearance_feat.h5"
+            
             self.motion_feature_h5 = f"{self.dataset_path}/{self.dataset_name}_motion_feat.h5"
+            
             print('loading appearance feature from %s' % (self.app_feature_h5))
             with h5py.File(self.app_feature_h5, 'r') as app_features_file:
                 app_video_ids = app_features_file['ids'][()]
@@ -262,7 +252,10 @@ class VideoQADataModule(pl.LightningDataModule):
             with open(self.question_pt_path, 'rb') as f:
                 self.question_dataset = pickle.load(f)
             self.app_feature_h5 = f"{self.dataset_path}/{self.dataset_name}_appearance_feat.h5"
+            self.app_feature_h5 = torch.Tensor(np.array(h5py.File(self.app_feature_h5, 'r')['resnet_features']))
+            
             self.motion_feature_h5 = f"{self.dataset_path}/{self.dataset_name}_motion_feat.h5"
+            self.motion_feature_h5 = torch.Tensor(np.array(h5py.File(self.motion_feature_h5, 'r')['resnext_features']))
             print('loading appearance feature from %s' % (self.app_feature_h5))
             with h5py.File(self.app_feature_h5, 'r') as app_features_file:
                 app_video_ids = app_features_file['ids'][()]
@@ -271,7 +264,9 @@ class VideoQADataModule(pl.LightningDataModule):
             with h5py.File(self.motion_feature_h5, 'r') as motion_features_file:
                 motion_video_ids = motion_features_file['ids'][()]
             self.motion_feat_id_to_index = {str(id): i for i, id in enumerate(motion_video_ids)}
-        
+            
+        self.app_feature_h5 = torch.Tensor(np.array(h5py.File(self.app_feature_h5, 'r')['resnet_features']))
+        self.motion_feature_h5 = torch.Tensor(np.array(h5py.File(self.motion_feature_h5, 'r')['resnext_features']))
     def train_dataloader(self):
         if(self.text_embedding_method == 'glove'):
             dataset = VideoQADatasetGlove(
@@ -326,7 +321,7 @@ class VideoQADataModule(pl.LightningDataModule):
                     dataset = dataset,
                     batch_size = self.batch_size,
                     num_workers = self.num_workers,
-                    shuffle = True,
+                    shuffle = False,
                     pin_memory = True
             )
         elif(self.text_embedding_method == 'bert'):
