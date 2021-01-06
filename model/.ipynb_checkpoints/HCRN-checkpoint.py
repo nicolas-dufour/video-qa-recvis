@@ -290,7 +290,7 @@ class HCRNNetworkGlove(nn.Module):
 ###### ORIGINAL CODE #######
 
 class InputUnitLinguisticBert(nn.Module):
-    def __init__(self,module_dim=512, bert_path = 'bert-base-uncased', train_bert = False, mult_embedding=False):
+    def __init__(self,module_dim=512, bert_path = 'bert-base-uncased', train_bert = 'freeze', mult_embedding=False):
         super(InputUnitLinguisticBert, self).__init__()
 
         self.module_dim = module_dim
@@ -299,11 +299,26 @@ class InputUnitLinguisticBert(nn.Module):
 
         self.bert = BertModel.from_pretrained(bert_path,output_hidden_states=True)
         self.bert_dim = self.bert.encoder.layer[-1].output.dense.out_features
-        self.bert.pooler = nn.Identity()
+#         self.bert.pooler = nn.Identity()
         
-        if(not train_bert):
+        if(self.train_bert == 'freeze'):
+            print('Freeze all layers')
             for param in self.bert.parameters():
                 param.requires_grad = False
+        elif(self.train_bert == 'last-2'):
+            print('Freeze all except last 2 layers')
+            for name, param in model.named_parameters():
+                layer_number = name.split('.')[2]
+                if(not (layer_number in ['10','11','pooler'])):
+                    param.requires_grad = False
+        elif(self.train_bert == 'last-4'):
+            print('Freeze all except last 4 layers')
+            for name, param in model.named_parameters():
+                layer_number = name.split('.')[2]
+                if(not (layer_number in ['8','9','10','11','pooler'])):
+                    param.requires_grad = False
+            
+            
         
         if(mult_embedding):
             self.embedding = nn.Linear(4*self.bert_dim,self.module_dim)
@@ -324,15 +339,19 @@ class InputUnitLinguisticBert(nn.Module):
         """
         data = {'input_ids':questions_input_ids,'attention_mask':question_attention_mask,'token_type_ids':question_token_type_ids}
         bert_output = self.bert(**data)
-        hidden_states = bert_output[2]
-        if(not self.mult_embedding):
-            question_embedding = torch.mean(hidden_states[-1], dim=1)
+        if(self.train_bert == 'freeze'):
+            hidden_states = bert_output[2]
+            if(not self.mult_embedding):
+                question_embedding = torch.mean(hidden_states[-1], dim=1)
+            else:
+                last_four_layers = [hidden_states[i] for i in (-1, -2, -3, -4)]
+                cat_hidden_states = torch.cat(tuple(last_four_layers), dim=-1)
+                question_embedding = torch.mean(cat_hidden_states, dim=1)
         else:
-            last_four_layers = [hidden_states[i] for i in (-1, -2, -3, -4)]
-            cat_hidden_states = torch.cat(tuple(last_four_layers), dim=-1)
-            question_embedding = torch.mean(cat_hidden_states, dim=1)
+            question_embedding = torch.mean(bert_output[0], dim=1)
         question_embedding = self.embedding(question_embedding)
         question_embedding = self.embedding_elu(self.embedding_dropout(question_embedding))
+        
         return question_embedding
 
 class HCRNNetworkBert(nn.Module):

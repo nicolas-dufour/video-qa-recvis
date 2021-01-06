@@ -217,6 +217,30 @@ class VideoQADataModule(pl.LightningDataModule):
             
         
     def prepare_data(self):
+            
+        self.app_feature_h5 = f"{self.dataset_path}/{self.dataset_name}_appearance_feat.h5"
+            
+        self.motion_feature_h5 = f"{self.dataset_path}/{self.dataset_name}_motion_feat.h5"
+            
+        print('loading appearance feature from %s' % (self.app_feature_h5))
+        with h5py.File(self.app_feature_h5, 'r') as app_features_file:
+            app_video_ids = app_features_file['ids'][()]
+        self.app_feat_id_to_index = {str(id): i for i, id in enumerate(app_video_ids)}
+        print('loading motion feature from %s' % (self.motion_feature_h5))
+        with h5py.File(self.motion_feature_h5, 'r') as motion_features_file:
+            motion_video_ids = motion_features_file['ids'][()]
+        self.motion_feat_id_to_index = {str(id): i for i, id in enumerate(motion_video_ids)}
+        
+        self.app_feature_h5 = torch.Tensor(np.array(h5py.File(self.app_feature_h5, 'r')['resnet_features']))
+        self.motion_feature_h5 = torch.Tensor(np.array(h5py.File(self.motion_feature_h5, 'r')['resnext_features']))
+        
+    def number_training_steps(self):
+        if(not self._has_prepared_data):
+            self.prepare_data()
+            self.train_loader_length = len(self.train_dataloader())
+        return self.train_loader_length
+        
+    def train_dataloader(self):
         if(self.text_embedding_method == 'glove'):
             self.question_pt_path = f"{self.dataset_path}/{self.text_embedding_method}_question_embedding/{self.dataset_name}_train_questions.pt"
             print('loading questions from %s' % (self.question_pt_path))
@@ -233,39 +257,6 @@ class VideoQADataModule(pl.LightningDataModule):
                     self.ans_candidates = obj['ans_candidates']
                     self.ans_candidates_len = obj['ans_candidates_len']
 
-
-            self.app_feature_h5 = f"{self.dataset_path}/{self.dataset_name}_appearance_feat.h5"
-            
-            self.motion_feature_h5 = f"{self.dataset_path}/{self.dataset_name}_motion_feat.h5"
-            
-            print('loading appearance feature from %s' % (self.app_feature_h5))
-            with h5py.File(self.app_feature_h5, 'r') as app_features_file:
-                app_video_ids = app_features_file['ids'][()]
-            self.app_feat_id_to_index = {str(id): i for i, id in enumerate(app_video_ids)}
-            print('loading motion feature from %s' % (self.motion_feature_h5))
-            with h5py.File(self.motion_feature_h5, 'r') as motion_features_file:
-                motion_video_ids = motion_features_file['ids'][()]
-            self.motion_feat_id_to_index = {str(id): i for i, id in enumerate(motion_video_ids)}
-            
-        elif(self.text_embedding_method == 'bert'):
-            self.question_pt_path = f"{self.dataset_path}/{self.text_embedding_method}_question_embedding/{self.dataset_name}_train_questions.pt"
-            print('loading questions from %s' % (self.question_pt_path))
-            with open(self.question_pt_path, 'rb') as f:
-                self.question_dataset = pickle.load(f)
-            self.app_feature_h5 = f"{self.dataset_path}/{self.dataset_name}_appearance_feat.h5"            
-            self.motion_feature_h5 = f"{self.dataset_path}/{self.dataset_name}_motion_feat.h5"
-            print('loading appearance feature from %s' % (self.app_feature_h5))
-            with h5py.File(self.app_feature_h5, 'r') as app_features_file:
-                app_video_ids = app_features_file['ids'][()]
-            self.app_feat_id_to_index = {str(id): i for i, id in enumerate(app_video_ids)}
-            print('loading motion feature from %s' % (self.motion_feature_h5))
-            with h5py.File(self.motion_feature_h5, 'r') as motion_features_file:
-                motion_video_ids = motion_features_file['ids'][()]
-            self.motion_feat_id_to_index = {str(id): i for i, id in enumerate(motion_video_ids)}
-        self.app_feature_h5 = torch.Tensor(np.array(h5py.File(self.app_feature_h5, 'r')['resnet_features']))
-        self.motion_feature_h5 = torch.Tensor(np.array(h5py.File(self.motion_feature_h5, 'r')['resnext_features']))
-    def train_dataloader(self):
-        if(self.text_embedding_method == 'glove'):
             dataset = VideoQADatasetGlove(
                 self.answers, self.ans_candidates,
                 self.ans_candidates_len, self.questions,
@@ -284,6 +275,10 @@ class VideoQADataModule(pl.LightningDataModule):
                     pin_memory = True
             )
         elif(self.text_embedding_method == 'bert'):
+            self.question_pt_path = f"{self.dataset_path}/{self.text_embedding_method}_question_embedding/{self.dataset_name}_train_questions.pt"
+            print('loading questions from %s' % (self.question_pt_path))
+            with open(self.question_pt_path, 'rb') as f:
+                self.question_dataset = pickle.load(f)
             dataset = VideoQADatasetBert(
                 self.question_dataset,
                 self.app_feature_h5, 
@@ -304,6 +299,21 @@ class VideoQADataModule(pl.LightningDataModule):
 
     def val_dataloader(self):
         if(self.text_embedding_method == 'glove'):
+            self.question_pt_path = f"{self.dataset_path}/{self.text_embedding_method}_question_embedding/{self.dataset_name}_val_questions.pt"
+            print('loading questions from %s' % (self.question_pt_path))
+            with open(self.question_pt_path, 'rb') as f:
+                obj = pickle.load(f)
+                self.questions = obj['questions']
+                self.questions_len = obj['questions_len']
+                self.video_ids = obj['video_ids']
+                self.questions_ids = obj['question_id']
+                self.answers = obj['answers']
+                self.ans_candidates = torch.zeros(5)
+                self.ans_candidates_len = torch.zeros(5)
+                if self.question_type in ['action', 'transition']:
+                    self.ans_candidates = obj['ans_candidates']
+                    self.ans_candidates_len = obj['ans_candidates_len']
+
             dataset = VideoQADatasetGlove(
                 self.answers, self.ans_candidates,
                 self.ans_candidates_len, self.questions,
@@ -322,6 +332,10 @@ class VideoQADataModule(pl.LightningDataModule):
                     pin_memory = True
             )
         elif(self.text_embedding_method == 'bert'):
+            self.question_pt_path = f"{self.dataset_path}/{self.text_embedding_method}_question_embedding/{self.dataset_name}_val_questions.pt"
+            print('loading questions from %s' % (self.question_pt_path))
+            with open(self.question_pt_path, 'rb') as f:
+                self.question_dataset = pickle.load(f)
             dataset = VideoQADatasetBert(
                 self.question_dataset,
                 self.app_feature_h5, 
@@ -342,6 +356,21 @@ class VideoQADataModule(pl.LightningDataModule):
 
     def test_dataloader(self):
         if(self.text_embedding_method == 'glove'):
+            self.question_pt_path = f"{self.dataset_path}/{self.text_embedding_method}_question_embedding/{self.dataset_name}_test_questions.pt"
+            print('loading questions from %s' % (self.question_pt_path))
+            with open(self.question_pt_path, 'rb') as f:
+                obj = pickle.load(f)
+                self.questions = obj['questions']
+                self.questions_len = obj['questions_len']
+                self.video_ids = obj['video_ids']
+                self.questions_ids = obj['question_id']
+                self.answers = obj['answers']
+                self.ans_candidates = torch.zeros(5)
+                self.ans_candidates_len = torch.zeros(5)
+                if self.question_type in ['action', 'transition']:
+                    self.ans_candidates = obj['ans_candidates']
+                    self.ans_candidates_len = obj['ans_candidates_len']
+
             dataset = VideoQADatasetGlove(
                 self.answers, self.ans_candidates,
                 self.ans_candidates_len, self.questions,
@@ -360,6 +389,10 @@ class VideoQADataModule(pl.LightningDataModule):
                     pin_memory = True
             )
         elif(self.text_embedding_method == 'bert'):
+            self.question_pt_path = f"{self.dataset_path}/{self.text_embedding_method}_question_embedding/{self.dataset_name}_test_questions.pt"
+            print('loading questions from %s' % (self.question_pt_path))
+            with open(self.question_pt_path, 'rb') as f:
+                self.question_dataset = pickle.load(f)
             dataset = VideoQADatasetBert(
                 self.question_dataset,
                 self.app_feature_h5, 
