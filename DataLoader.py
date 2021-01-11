@@ -94,7 +94,7 @@ class VideoQADataLoaderGlove(DataLoader):
 
 class VideoQADatasetTransformer(Dataset):
 
-    def __init__(self, questions_dataset,app_feature_h5, app_feat_id_to_index, motion_feature_h5, motion_feat_id_to_index):
+    def __init__(self, questions_dataset,app_feature_h5, app_feat_id_to_index, motion_feature_h5, motion_feat_id_to_index,subtitles = None):
         # convert data to tensor
         self.questions_dataset = questions_dataset
         self.has_token_type_ids = 'question_token_type_ids' in questions_dataset.column_names
@@ -104,17 +104,35 @@ class VideoQADatasetTransformer(Dataset):
         self.motion_feat_id_to_index = motion_feat_id_to_index
         self.f_app = app_feature_h5
         self.f_motion = motion_feature_h5
+        self.subtitles = subtitles
         
     def __getitem__(self, index):
         answer = self.questions_dataset[index]['answer_token']
-        ans_candidates = torch.zeros(5)
-        ans_candidates_len = torch.zeros(5)
+        
+        ans_candidates_tokens = torch.zeros(5)
+        ans_candidates_attention_mask = torch.zeros(5)
+        
         question_tokens = torch.LongTensor(self.questions_dataset[index]['question_tokens'])
         question_attention_masks = torch.LongTensor(self.questions_dataset[index]['question_attention_mask'])
+        
         if(self.has_token_type_ids):
             question_token_type_ids = torch.LongTensor(self.questions_dataset[index]['question_token_type_ids'])
+            ans_candidates_token_type_ids = torch.zeros(5)
         else:
-            question_token_type_ids = torch.zeros(5)
+            question_token_type_ids = None
+            ans_candidates_token_type_ids = None
+        
+        if('a0_token_type_ids' in questions_dataset.column_names):
+            ans_candidates_tokens=[]
+            ans_candidates_attention_mask = []
+            if(self.has_token_type_ids):
+                ans_candidates_token_type_ids =[]
+            ans_cands = ['a0','a1','a2','a3','a4']
+            for ans_cand in ans_cands:
+                ans_candidates_token.append(torch.LongTensor(self.questions_dataset[index][ans_cand+'_tokens'])
+                question_attention_masks.append(self.questions_dataset[index][ans_cand+'_attention_mask'])
+                if(self.has_token_type_ids):
+                    ans_candidates_token_type_ids.append(self.questions_dataset[index][ans_cand+'_token_type_ids'])                
         
         video_idx = self.questions_dataset[index]['video_ids']
         question_idx = self.questions_dataset[index]['question_id']
@@ -126,7 +144,8 @@ class VideoQADatasetTransformer(Dataset):
         motion_feat = self.f_motion[motion_index]  # (8, 2048)
         return (
             video_idx, question_idx,
-            answer, ans_candidates,
+            answer, ans_candidates_tokens,
+            ans_candidates_attention_mask,
             ans_candidates_len, appearance_feat,
             motion_feat,question_tokens,
             question_attention_masks,question_token_type_ids
@@ -172,8 +191,8 @@ def collate_batch_videoqa_transformer(batch):
         question_attention_masks_batch.append(item[8])
         question_token_type_ids_batch.append(item[9])
     return (
-        torch.LongTensor(video_idx_batch),
-        torch.LongTensor(question_idx_batch),
+        video_idx_batch,
+        question_idx_batch,
         torch.LongTensor(answer_batch),
         torch.stack(ans_candidates_batch),
         torch.stack(ans_candidates_len_batch),
@@ -204,6 +223,8 @@ class VideoQADataModule(pl.LightningDataModule):
             self.question_type = 'none'
         elif(self.dataset_name == 'tgif-qa_frameqa'):
             self.question_type = 'frameqa'
+        elif(self.dataset_name == 'tvqa'):
+            self.question_type = 'tvqa'
         self.num_workers = num_workers
         
         self.dataset_path = f"{data_path}/{self.dataset_name}"
@@ -234,13 +255,24 @@ class VideoQADataModule(pl.LightningDataModule):
         with h5py.File(self.app_feature_h5, 'r') as app_features_file:
             app_video_ids = app_features_file['ids'][()]
         self.app_feat_id_to_index = {str(id): i for i, id in enumerate(app_video_ids)}
+        
+        self.app_feature_h5 = torch.Tensor(np.array(h5py.File(self.app_feature_h5, 'r')['resnet_features']))
+        
         print('loading motion feature from %s' % (self.motion_feature_h5))
+        
         with h5py.File(self.motion_feature_h5, 'r') as motion_features_file:
             motion_video_ids = motion_features_file['ids'][()]
         self.motion_feat_id_to_index = {str(id): i for i, id in enumerate(motion_video_ids)}
         
-        self.app_feature_h5 = torch.Tensor(np.array(h5py.File(self.app_feature_h5, 'r')['resnet_features']))
         self.motion_feature_h5 = torch.Tensor(np.array(h5py.File(self.motion_feature_h5, 'r')['resnext_features']))
+        
+        self.subtitles=None
+        if(self.question_type =='tvqa'):
+            self.subtitles_path = f"{self.dataset_path}/{self.dataset_name}_subtitles_splited.pt"
+            print(f"Loading subtitles from {self.subtitles_path}")
+            with open(self.subtitles_path, 'rb') as f:
+                self.subtitles = pickle.load(f)
+        
         
     def number_training_steps(self):
         if(not self._has_prepared_data):
@@ -287,12 +319,14 @@ class VideoQADataModule(pl.LightningDataModule):
             print('loading questions from %s' % (self.question_pt_path))
             with open(self.question_pt_path, 'rb') as f:
                 self.question_dataset = pickle.load(f)
+            
             dataset = VideoQADatasetTransformer(
                 self.question_dataset,
                 self.app_feature_h5, 
                 self.app_feat_id_to_index, 
                 self.motion_feature_h5,
-                self.motion_feat_id_to_index
+                self.motion_feat_id_to_index,
+                self.subtitles
             )
             return VideoQADataLoaderTransformer(
                 dataset = dataset,
@@ -350,7 +384,8 @@ class VideoQADataModule(pl.LightningDataModule):
                 self.app_feature_h5, 
                 self.app_feat_id_to_index, 
                 self.motion_feature_h5,
-                self.motion_feat_id_to_index
+                self.motion_feat_id_to_index,
+                self.subtitles
             )
             return VideoQADataLoaderTransformer(
                 dataset = dataset,
@@ -407,7 +442,8 @@ class VideoQADataModule(pl.LightningDataModule):
                 self.app_feature_h5, 
                 self.app_feat_id_to_index, 
                 self.motion_feature_h5,
-                self.motion_feat_id_to_index
+                self.motion_feat_id_to_index,
+                self.subtitles
             )
             return VideoQADataLoaderTransformer(
                 dataset = dataset,

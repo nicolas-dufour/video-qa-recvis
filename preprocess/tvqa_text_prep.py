@@ -6,8 +6,11 @@ import pickle
 import torch
 import h5py
 import re
+import os
 import numpy as np
 import pandas as pd
+from tqdm.notebook import tqdm
+import pysrt
 
 def make_clips(app_data_file,nb_clips,clips_length,output_file):
     app_data = h5py.File(app_data_file,'r')
@@ -95,7 +98,7 @@ def process_questions(train_csv, val_csv, test_csv, train_output, val_output, te
     tokenized_datasets = tokenized_datasets.map(
                lambda instance : {
                     'question_id': instance['qid'],
-                    'video_name': instance['vid_name'],
+                    'video_ids': instance['vid_name'],
                     'answer_token': instance['answer_idx']},
                 batched=True,
                 remove_columns=['qid','vid_name','answer_idx'])
@@ -124,6 +127,65 @@ def process_questions(train_csv, val_csv, test_csv, train_output, val_output, te
     with open(test_output, 'wb') as f:
         pickle.dump(tokenized_datasets['test'], f)
 
-        
-def process_subs(subtitles_folder):
-    
+def convert_to_ms(datetime):
+    return datetime.milliseconds + 1000*(datetime.seconds+60*(datetime.minutes + 60*datetime.hours))
+
+def get_overlap(a, b):
+    return max(0, min(a[1], b[1]) - max(a[0], b[0]))
+
+def clean_sub_str(string):
+    """ Tokenization/string cleaning for strings.
+    Adds special token [SPKR] to mark the beginning of a new person speaking 
+    """
+    string = re.sub(r"[^A-Za-z0-9(),!?:.\'`]", " ", string)  # <> are added after the cleaning process
+    string = re.sub(r"\'s", " \'s", string)
+    string = re.sub(r"\'ve", " \'ve", string)  # split as two words
+    string = re.sub(r"n\'t", " n\'t", string)
+    string = re.sub(r"\'re", " \'re", string)
+    string = re.sub(r"\'d", " \'d", string)
+    string = re.sub(r"\'ll", " \'ll", string)
+    string = re.sub(r"\'m", " \'m", string)
+    string = re.sub(r":", " : ", string)
+    string = re.sub(r",", " , ", string)
+    string = re.sub(r"!", " ! ", string)
+    string = re.sub(r"\.\.\.", " . ", string)
+    string = re.sub(r"\.", " . ", string)
+    string = re.sub(r"\(", " [SPKR] ", string)
+    string = re.sub(r"\)", " [SPKR] ", string)
+    string = re.sub(r"\?", " ? ", string)
+    string = re.sub(r"\s{2,}", " ", string)
+    return string.strip()
+
+def make_intervals(final_time,nb_intervals):
+    intervals = []
+    int_len = final_time/nb_intervals
+    for i in range(nb_intervals):
+        intervals.append([i*int_len,(i+1)*int_len])
+    return intervals
+
+def partition_subtitle(subtitle,nb_clips,tokenizer):
+    video_length = convert_to_ms(subtitle[-1].end)
+    intervals = make_intervals(video_length,nb_clips)
+    sub_clips = [[] for i in range(nb_clips)]
+    for segment in subtitle:
+        segment_interval = [convert_to_ms(segment.start),convert_to_ms(segment.end)]
+        for i in range(nb_clips):
+            if get_overlap(segment_interval, intervals[i]):
+                sub_clips[i].append(segment.text)
+    for i in range(nb_clips):
+        sub_clips[i] = tokenizer(clean_sub_str(''.join(sub_clips[i])))
+    return sub_clips
+
+def process_subs(subtitles_folder,output_file,model_name='bert-base-uncased'):
+    tokenized_subs = {}
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    nb_clips = 8
+    for clip in tqdm(os.listdir(subtitles_folder)):
+        path = os.path.join(subtitles_folder, clip)
+        if os.path.isdir(path):
+            # skip directories
+            continue
+        subtitle = pysrt.open(path)
+        tokenized_subs[clip.split('.')[0]] = partition_subtitle(subtitle,nb_clips,tokenizer)
+    with open(output_file, 'wb') as f:
+        pickle.dump(tokenized_subs, f)
