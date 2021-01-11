@@ -90,13 +90,14 @@ class VideoQADataLoaderGlove(DataLoader):
         return math.ceil(len(self.dataset) / self.batch_size)
     
 
-#### VideoQA dataset for bert data
+#### VideoQA dataset for Transformer data
 
-class VideoQADatasetBert(Dataset):
+class VideoQADatasetTransformer(Dataset):
 
     def __init__(self, questions_dataset,app_feature_h5, app_feat_id_to_index, motion_feature_h5, motion_feat_id_to_index):
         # convert data to tensor
         self.questions_dataset = questions_dataset
+        self.has_token_type_ids = 'question_token_type_ids' in questions_dataset.column_names
         self.app_feature_h5 = app_feature_h5
         self.motion_feature_h5 = motion_feature_h5
         self.app_feat_id_to_index = app_feat_id_to_index
@@ -110,7 +111,10 @@ class VideoQADatasetBert(Dataset):
         ans_candidates_len = torch.zeros(5)
         question_tokens = torch.LongTensor(self.questions_dataset[index]['question_tokens'])
         question_attention_masks = torch.LongTensor(self.questions_dataset[index]['question_attention_mask'])
-        question_token_type_ids = torch.LongTensor(self.questions_dataset[index]['question_token_type_ids'])
+        if(self.has_token_type_ids):
+            question_token_type_ids = torch.LongTensor(self.questions_dataset[index]['question_token_type_ids'])
+        else:
+            question_token_type_ids = torch.zeros(5)
         
         video_idx = self.questions_dataset[index]['video_ids']
         question_idx = self.questions_dataset[index]['question_id']
@@ -120,7 +124,6 @@ class VideoQADatasetBert(Dataset):
         
         appearance_feat = self.f_app[app_index]  # (8, 16, 2048)
         motion_feat = self.f_motion[motion_index]  # (8, 2048)
-        
         return (
             video_idx, question_idx,
             answer, ans_candidates,
@@ -133,7 +136,7 @@ class VideoQADatasetBert(Dataset):
         return len(self.questions_dataset)
 
 
-class VideoQADataLoaderBert(DataLoader):
+class VideoQADataLoaderTransformer(DataLoader):
 
     def __init__(self, **kwargs):
         
@@ -146,7 +149,7 @@ class VideoQADataLoaderBert(DataLoader):
     def __len__(self):
         return math.ceil(len(self.dataset) / self.batch_size)
 
-def collate_batch_videoqa_bert(batch):
+def collate_batch_videoqa_transformer(batch):
     video_idx_batch = list()
     question_idx_batch = list()
     answer_batch = list()
@@ -178,39 +181,44 @@ def collate_batch_videoqa_bert(batch):
         torch.stack(motion_feat_batch),
         pad_sequence(question_tokens_batch, batch_first=True, padding_value=0),
         pad_sequence(question_attention_masks_batch, batch_first=True, padding_value=0),
-        pad_sequence(question_token_type_ids_batch, batch_first=True, padding_value=0)   
-        
-        
+        pad_sequence(question_token_type_ids_batch, batch_first=True, padding_value=0)
     )
 
 def invert_dict(d):
     return {v: k for k, v in d.items()}
+
+
 class VideoQADataModule(pl.LightningDataModule):
-    def __init__(self, data_path,dataset_name,batch_size,text_embedding_method,num_workers =8):
+    def __init__(self, data_path,dataset_name,batch_size,text_embedding_model,num_workers =8):
         super().__init__()
-        
+        if(text_embedding_model=='bert' or text_embedding_model=='roberta' or text_embedding_model=='distillbert'):
+            self.text_embedding_method = 'transformer'
+        elif(text_embedding_model == 'glove'):
+            self.text_embedding_method = 'glove'
+        else:
+            raise "Text embedding method not supported"
+        self.text_embedding_model = text_embedding_model
         self.batch_size = batch_size
         self.dataset_name = dataset_name
         if(self.dataset_name == 'msvd-qa' or self.dataset_name == 'msrvtt-qa'):
             self.question_type = 'none'
         elif(self.dataset_name == 'tgif-qa_frameqa'):
             self.question_type = 'frameqa'
-        self.text_embedding_method = text_embedding_method
         self.num_workers = num_workers
         
         self.dataset_path = f"{data_path}/{self.dataset_name}"
         
         if(self.text_embedding_method == 'glove'):
-            with open(f"{self.dataset_path}/{self.text_embedding_method}_question_embedding/{self.dataset_name}_train_questions.pt", 'rb') as f:
+            with open(f"{self.dataset_path}/{self.text_embedding_model}_question_embedding/{self.dataset_name}_train_questions.pt", 'rb') as f:
                 obj = pickle.load(f)
                 glove_matrix = obj['glove']
             self.glove_matrix = glove_matrix
-        elif(self.text_embedding_method == 'bert'):
-            self.finetuned_bert_path = f"{self.dataset_path}/{self.text_embedding_method}_question_embedding/question_finetuned_model"
-        with open(f"{self.dataset_path}/{self.text_embedding_method}_question_embedding/{self.dataset_name}_vocab_{self.text_embedding_method}.json", 'r') as f:
+        elif(self.text_embedding_method == 'transformer'):
+            self.finetuned_transformer_path = f"{self.dataset_path}/{self.text_embedding_model}_question_embedding/question_finetuned_model"
+        with open(f"{self.dataset_path}/{self.text_embedding_model}_question_embedding/{self.dataset_name}_vocab_{self.text_embedding_model}.json", 'r') as f:
             vocab = json.load(f)
             vocab['answer_idx_to_token'] = invert_dict(vocab['answer_token_to_idx'])
-            if(self.text_embedding_method == 'glove'):
+            if(self.text_embedding_model == 'glove'):
                 vocab['question_idx_to_token'] = invert_dict(vocab['question_token_to_idx'])
                 vocab['question_answer_idx_to_token'] = invert_dict(vocab['question_answer_token_to_idx'])
         self.vocab = vocab
@@ -242,7 +250,7 @@ class VideoQADataModule(pl.LightningDataModule):
         
     def train_dataloader(self):
         if(self.text_embedding_method == 'glove'):
-            self.question_pt_path = f"{self.dataset_path}/{self.text_embedding_method}_question_embedding/{self.dataset_name}_train_questions.pt"
+            self.question_pt_path = f"{self.dataset_path}/{self.text_embedding_model}_question_embedding/{self.dataset_name}_train_questions.pt"
             print('loading questions from %s' % (self.question_pt_path))
             with open(self.question_pt_path, 'rb') as f:
                 obj = pickle.load(f)
@@ -274,22 +282,22 @@ class VideoQADataModule(pl.LightningDataModule):
                     shuffle = True,
                     pin_memory = True
             )
-        elif(self.text_embedding_method == 'bert'):
-            self.question_pt_path = f"{self.dataset_path}/{self.text_embedding_method}_question_embedding/{self.dataset_name}_train_questions.pt"
+        elif(self.text_embedding_method == 'transformer'):
+            self.question_pt_path = f"{self.dataset_path}/{self.text_embedding_model}_question_embedding/{self.dataset_name}_train_questions.pt"
             print('loading questions from %s' % (self.question_pt_path))
             with open(self.question_pt_path, 'rb') as f:
                 self.question_dataset = pickle.load(f)
-            dataset = VideoQADatasetBert(
+            dataset = VideoQADatasetTransformer(
                 self.question_dataset,
                 self.app_feature_h5, 
                 self.app_feat_id_to_index, 
                 self.motion_feature_h5,
                 self.motion_feat_id_to_index
             )
-            return VideoQADataLoaderBert(
+            return VideoQADataLoaderTransformer(
                 dataset = dataset,
                 batch_size = self.batch_size,
-                collate_fn = collate_batch_videoqa_bert,
+                collate_fn = collate_batch_videoqa_transformer,
                 num_workers = self.num_workers,
                 shuffle=True,
                 pin_memory = True
@@ -299,7 +307,7 @@ class VideoQADataModule(pl.LightningDataModule):
 
     def val_dataloader(self):
         if(self.text_embedding_method == 'glove'):
-            self.question_pt_path = f"{self.dataset_path}/{self.text_embedding_method}_question_embedding/{self.dataset_name}_val_questions.pt"
+            self.question_pt_path = f"{self.dataset_path}/{self.text_embedding_model}_question_embedding/{self.dataset_name}_val_questions.pt"
             print('loading questions from %s' % (self.question_pt_path))
             with open(self.question_pt_path, 'rb') as f:
                 obj = pickle.load(f)
@@ -331,22 +339,23 @@ class VideoQADataModule(pl.LightningDataModule):
                     shuffle = False,
                     pin_memory = True
             )
-        elif(self.text_embedding_method == 'bert'):
-            self.question_pt_path = f"{self.dataset_path}/{self.text_embedding_method}_question_embedding/{self.dataset_name}_val_questions.pt"
+        elif(self.text_embedding_method == 'transformer'):
+            self.question_pt_path = f"{self.dataset_path}/{self.text_embedding_model}_question_embedding/{self.dataset_name}_val_questions.pt"
             print('loading questions from %s' % (self.question_pt_path))
             with open(self.question_pt_path, 'rb') as f:
                 self.question_dataset = pickle.load(f)
-            dataset = VideoQADatasetBert(
+            
+            dataset = VideoQADatasetTransformer(
                 self.question_dataset,
                 self.app_feature_h5, 
                 self.app_feat_id_to_index, 
                 self.motion_feature_h5,
                 self.motion_feat_id_to_index
             )
-            return VideoQADataLoaderBert(
+            return VideoQADataLoaderTransformer(
                 dataset = dataset,
                 batch_size = self.batch_size,
-                collate_fn = collate_batch_videoqa_bert,
+                collate_fn = collate_batch_videoqa_transformer,
                 num_workers = self.num_workers,
                 shuffle=False,
                 pin_memory = True
@@ -356,7 +365,7 @@ class VideoQADataModule(pl.LightningDataModule):
 
     def test_dataloader(self):
         if(self.text_embedding_method == 'glove'):
-            self.question_pt_path = f"{self.dataset_path}/{self.text_embedding_method}_question_embedding/{self.dataset_name}_test_questions.pt"
+            self.question_pt_path = f"{self.dataset_path}/{self.text_embedding_model}_question_embedding/{self.dataset_name}_test_questions.pt"
             print('loading questions from %s' % (self.question_pt_path))
             with open(self.question_pt_path, 'rb') as f:
                 obj = pickle.load(f)
@@ -388,22 +397,22 @@ class VideoQADataModule(pl.LightningDataModule):
                     shuffle = False,
                     pin_memory = True
             )
-        elif(self.text_embedding_method == 'bert'):
-            self.question_pt_path = f"{self.dataset_path}/{self.text_embedding_method}_question_embedding/{self.dataset_name}_test_questions.pt"
+        elif(self.text_embedding_method == 'transformer'):
+            self.question_pt_path = f"{self.dataset_path}/{self.text_embedding_model}_question_embedding/{self.dataset_name}_test_questions.pt"
             print('loading questions from %s' % (self.question_pt_path))
             with open(self.question_pt_path, 'rb') as f:
                 self.question_dataset = pickle.load(f)
-            dataset = VideoQADatasetBert(
+            dataset = VideoQADatasetTransformer(
                 self.question_dataset,
                 self.app_feature_h5, 
                 self.app_feat_id_to_index, 
                 self.motion_feature_h5,
                 self.motion_feat_id_to_index
             )
-            return VideoQADataLoaderBert(
+            return VideoQADataLoaderTransformer(
                 dataset = dataset,
                 batch_size = self.batch_size,
-                collate_fn = collate_batch_videoqa_bert,
+                collate_fn = collate_batch_videoqa_transformer,
                 num_workers = self.num_workers,
                 shuffle=False,
                 pin_memory = True
