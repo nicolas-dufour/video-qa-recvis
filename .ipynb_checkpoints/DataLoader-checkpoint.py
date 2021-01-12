@@ -441,14 +441,13 @@ class VideoQADataModule(pl.LightningDataModule):
 
 class TVQADataset(Dataset):
 
-    def __init__(self, questions_dataset,app_feature_h5, app_feat_id_to_index,subtitles = None):
+    def __init__(self, questions_dataset,app_feature_h5,app_feat_id_to_index,subtitles = None):
         # convert data to tensor
         self.questions_dataset = questions_dataset
         self.has_token_type_ids = 'question_token_type_ids' in questions_dataset.column_names
         self.app_feature_h5 = app_feature_h5
         self.app_feat_id_to_index = app_feat_id_to_index
         self.f_app = app_feature_h5
-        self.f_motion = motion_feature_h5
         self.subtitles = subtitles
         
     def __getitem__(self, index):
@@ -466,15 +465,15 @@ class TVQADataset(Dataset):
         else:
             question_token_type_ids = torch.zeros(5)
         
-        if('a0_token_type_ids' in questions_dataset.column_names):
+        if('a0_token_type_ids' in self.questions_dataset.column_names):
             ans_candidates_tokens=[]
             ans_candidates_attention_mask = []
             if(self.has_token_type_ids):
                 ans_candidates_token_type_ids =[]
             ans_cands = ['a0','a1','a2','a3','a4']
             for ans_cand in ans_cands:
-                ans_candidates_token.append(torch.LongTensor(self.questions_dataset[index][ans_cand+'_tokens']))
-                question_attention_masks.append(torch.LongTensor(self.questions_dataset[index][ans_cand+'_attention_mask']))
+                ans_candidates_tokens.append(torch.LongTensor(self.questions_dataset[index][ans_cand+'_tokens']))
+                ans_candidates_attention_mask.append(torch.LongTensor(self.questions_dataset[index][ans_cand+'_attention_mask']))
                 if(self.has_token_type_ids):
                     ans_candidates_token_type_ids.append(torch.LongTensor(self.questions_dataset[index][ans_cand+'_token_type_ids']))                
         
@@ -490,13 +489,14 @@ class TVQADataset(Dataset):
             if(self.has_token_type_ids):
                 subtitles_token_type_ids = []
             subtitles = self.subtitles[str(video_idx)]
-            for i in range(len(subtitles)):
-                subtitles_tokens.append(torch.LongTensor(subtitles['input_ids']))
-                subtitles_attention_mask.append(torch.LongTensor(subtitles['attention_mask']))
+            for subtitle in subtitles:
+                subtitles_tokens.append(torch.LongTensor(subtitle['input_ids']))
+                subtitles_attention_mask.append(torch.LongTensor(subtitle['attention_mask']))
                 if(self.has_token_type_ids):
-                    subtitles_token_type_ids.append(torch.LongTensor(subtitles['token_type_ids']))
+                    subtitles_token_type_ids.append(torch.LongTensor(subtitle['token_type_ids']))
         
-        app_index = self.app_feat_id_to_index[str(video_idx)]        
+        app_index = self.app_feat_id_to_index[str(video_idx)]
+        
         appearance_feat = self.f_app[app_index]  # (8, 16, 2048)
 
         return (
@@ -514,7 +514,7 @@ class TVQADataset(Dataset):
         return len(self.questions_dataset)
 
 
-class TVQADataLoaderTransformer(DataLoader):
+class TVQADataLoader(DataLoader):
 
     def __init__(self, **kwargs):
         
@@ -551,12 +551,12 @@ def collate_batch_tvqa_transformer(batch):
         ans_candidates_attention_masks_batch.append(item[4])
         ans_candidates_token_type_ids_batch.append(item[5])
         appearance_feat_batch.append(item[6])
-        question_tokens_batch.append(item[8])
-        question_attention_masks_batch.append(item[9])
-        question_token_type_ids_batch.append(item[10])
-        subtitles_tokens_batch.append(item[11])
-        subtitles_attention_masks_batch.append(item[12])
-        subtitles_token_type_ids_batch.append(item[13])
+        question_tokens_batch.append(item[7])
+        question_attention_masks_batch.append(item[8])
+        question_token_type_ids_batch.append(item[9])
+        subtitles_tokens_batch.append(item[10])
+        subtitles_attention_masks_batch.append(item[11])
+        subtitles_token_type_ids_batch.append(item[12])
 
     ans_candidates_tokens_batch = [item for sublist in ans_candidates_tokens_batch for item in sublist]
     ans_candidates_attention_masks_batch = [item for sublist in ans_candidates_attention_masks_batch for item in sublist]
@@ -606,18 +606,18 @@ class TVQADataModule(pl.LightningDataModule):
     def prepare_data(self):
             
         self.app_feature_h5 = f"{self.dataset_path}/{self.dataset_name}_appearance_feat.h5"
-            
-        self.motion_feature_h5 = f"{self.dataset_path}/{self.dataset_name}_motion_feat.h5"
-            
+                    
         print('loading appearance feature from %s' % (self.app_feature_h5))
         with h5py.File(self.app_feature_h5, 'r') as app_features_file:
             app_video_ids = app_features_file['ids'][()]
-        self.app_feat_id_to_index = {str(id): i for i, id in enumerate(app_video_ids)}
+        self.app_feat_id_to_index = {id.decode('unicode_escape'): i for i, id in enumerate(app_video_ids)}
         
         self.app_feature_h5 = torch.Tensor(np.array(h5py.File(self.app_feature_h5, 'r')['resnet_features']))
 
         self.subtitles_path = f"{self.dataset_path}/{self.dataset_name}_subtitles_splited.pt"
+        
         print(f"Loading subtitles from {self.subtitles_path}")
+        
         with open(self.subtitles_path, 'rb') as f:
             self.subtitles = pickle.load(f)
     
@@ -635,16 +635,16 @@ class TVQADataModule(pl.LightningDataModule):
             with open(self.question_pt_path, 'rb') as f:
                 self.question_dataset = pickle.load(f)
             
-            dataset = TVQADatasetTransformer(
+            dataset = TVQADataset(
                 self.question_dataset,
-                self.app_feature_h5, 
-                self.app_feat_id_to_index, 
+                self.app_feature_h5,
+                self.app_feat_id_to_index,
                 self.subtitles
             )
-            return TVQADataLoaderTransformer(
+            return TVQADataLoader(
                 dataset = dataset,
                 batch_size = self.batch_size,
-                collate_fn = collate_batch_videoqa_transformer,
+                collate_fn = collate_batch_tvqa_transformer,
                 num_workers = self.num_workers,
                 shuffle=True,
                 pin_memory = True
@@ -659,16 +659,16 @@ class TVQADataModule(pl.LightningDataModule):
             with open(self.question_pt_path, 'rb') as f:
                 self.question_dataset = pickle.load(f)
             
-            dataset = TVQADatasetTransformer(
+            dataset = TVQADataset(
                 self.question_dataset,
                 self.app_feature_h5, 
-                self.app_feat_id_to_index, 
+                self.app_feat_id_to_index,
                 self.subtitles
             )
-            return TVQADataLoaderTransformer(
+            return TVQADataLoader(
                 dataset = dataset,
                 batch_size = self.batch_size,
-                collate_fn = collate_batch_videoqa_transformer,
+                collate_fn = collate_batch_tvqa_transformer,
                 num_workers = self.num_workers,
                 shuffle=False,
                 pin_memory = True
@@ -682,16 +682,16 @@ class TVQADataModule(pl.LightningDataModule):
             print('loading questions from %s' % (self.question_pt_path))
             with open(self.question_pt_path, 'rb') as f:
                 self.question_dataset = pickle.load(f)
-            dataset = TVQADatasetTransformer(
+            dataset = TVQADataset(
                 self.question_dataset,
                 self.app_feature_h5, 
-                self.app_feat_id_to_index, 
+                self.app_feat_id_to_index,
                 self.subtitles
             )
-            return TVQADataLoaderTransformer(
+            return TVQADataLoader(
                 dataset = dataset,
                 batch_size = self.batch_size,
-                collate_fn = collate_batch_videoqa_transformer,
+                collate_fn = collate_batch_tvqa_transformer,
                 num_workers = self.num_workers,
                 shuffle=False,
                 pin_memory = True

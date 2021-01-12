@@ -359,7 +359,7 @@ class InputUnitLinguisticTransformer(nn.Module):
         return question_embedding
 
 class HCRNNetworkBert(nn.Module):
-    def __init__(self, vision_dim, module_dim, k_max_frame_level, k_max_clip_level, spl_resolution, vocab=None, question_type, transformer_cache_dir=None, transformer_path = 'bert-base-uncased', train_bert = False, mult_embedding=False):
+    def __init__(self, vision_dim, module_dim, k_max_frame_level, k_max_clip_level, spl_resolution, question_type, vocab=None, transformer_cache_dir=None, transformer_path = 'bert-base-uncased', train_bert = False, mult_embedding=False):
         super(HCRNNetworkBert, self).__init__()
 
         self.question_type = question_type
@@ -572,7 +572,7 @@ class HCRNNetworkBertAblation(nn.Module):
 
 class InputUnitVisualSubtitles(nn.Module):
     def __init__(self, k_max_frame_level, k_max_clip_level, spl_resolution, vision_dim, module_dim=512):
-        super(InputUnitVisual, self).__init__()
+        super(InputUnitVisualSubtitles, self).__init__()
 
         self.clip_level_motion_cond = CRN(module_dim, k_max_frame_level, k_max_frame_level, gating=False, spl_resolution=spl_resolution)
         self.clip_level_question_cond = CRN(module_dim, k_max_frame_level-2, k_max_frame_level-2, gating=True, spl_resolution=spl_resolution)
@@ -589,7 +589,7 @@ class InputUnitVisualSubtitles(nn.Module):
         self.module_dim = module_dim
         self.activation = nn.ELU()
 
-    def forward(self, appearance_video_feat, question_embedding):
+    def forward(self, appearance_video_feat, motion_video_feat, question_embedding):
         """
         Args:
             appearance_video_feat: [Tensor] (batch_size, num_clips, num_frames, visual_inp_dim)
@@ -599,7 +599,6 @@ class InputUnitVisualSubtitles(nn.Module):
             encoded video feature: [Tensor] (batch_size, N, module_dim)
         """
         batch_size = appearance_video_feat.size(0)
-        motion_video_feat = torch.zeros((batch_size,appearance_video_feat.size(1),appearance_video_feat.size(3)))
         clip_level_crn_outputs = []
         question_embedding_proj = self.question_embedding_proj(question_embedding)
         for i in range(appearance_video_feat.size(1)):
@@ -635,30 +634,32 @@ class InputUnitVisualSubtitles(nn.Module):
         return video_level_crn_output
 
 class HCRNNetworkTVQA(nn.Module):
-    def __init__(self, vision_dim, module_dim, k_max_frame_level, k_max_clip_level, spl_resolution, vocab=None, question_type, transformer_cache_dir=None, transformer_path = 'bert-base-uncased', train_bert = False, mult_embedding=False):
-        super(HCRNNetworkBert, self).__init__()
+    def __init__(self, vision_dim, module_dim, k_max_frame_level, k_max_clip_level, spl_resolution, question_type, vocab=None, transformer_cache_dir=None, transformer_path = 'bert-base-uncased', train_bert = False, mult_embedding=False):
+        super(HCRNNetworkTVQA, self).__init__()
 
         self.question_type = question_type
         self.feature_aggregation = FeatureAggregation(module_dim)
 
         if self.question_type in ['action', 'transition', 'tvqa']:
             self.linguistic_input_unit = InputUnitLinguisticTransformer(transformer_path = transformer_path, transformer_cache_dir=transformer_cache_dir, train_bert = train_bert, mult_embedding = mult_embedding)
-            self.visual_input_unit = InputUnitVisual(k_max_frame_level=k_max_frame_level, k_max_clip_level=k_max_clip_level, spl_resolution=spl_resolution, vision_dim=vision_dim, module_dim=module_dim)
+            self.visual_input_unit = InputUnitVisualSubtitles(k_max_frame_level=k_max_frame_level, k_max_clip_level=k_max_clip_level, spl_resolution=spl_resolution, vision_dim=vision_dim, module_dim=module_dim)
             self.output_unit = OutputUnitMultiChoices(module_dim=module_dim)
 
         elif self.question_type == 'count':
             self.linguistic_input_unit = InputUnitLinguisticTransformer(transformer_path = transformer_path,transformer_cache_dir=transformer_cache_dir, train_bert = train_bert, mult_embedding = mult_embedding)
-            self.visual_input_unit = InputUnitVisual(k_max_frame_level=k_max_frame_level, k_max_clip_level=k_max_clip_level, spl_resolution=spl_resolution, vision_dim=vision_dim, module_dim=module_dim)
+            self.visual_input_unit = InputUnitVisualSubtitles(k_max_frame_level=k_max_frame_level, k_max_clip_level=k_max_clip_level, spl_resolution=spl_resolution, vision_dim=vision_dim, module_dim=module_dim)
             self.output_unit = OutputUnitCount(module_dim=module_dim)
         else:
             self.num_classes = len(vocab['answer_token_to_idx'])
             self.linguistic_input_unit = InputUnitLinguisticTransformer(transformer_path = transformer_path,transformer_cache_dir=transformer_cache_dir, train_bert = train_bert, mult_embedding = mult_embedding)
-            self.visual_input_unit = InputUnitVisual(k_max_frame_level=k_max_frame_level, k_max_clip_level=k_max_clip_level, spl_resolution=spl_resolution, vision_dim=vision_dim, module_dim=module_dim)
+            self.visual_input_unit = InputUnitVisualSubtitles(k_max_frame_level=k_max_frame_level, k_max_clip_level=k_max_clip_level, spl_resolution=spl_resolution, vision_dim=vision_dim, module_dim=module_dim)
             self.output_unit = OutputUnitOpenEnded(num_answers=self.num_classes,module_dim=module_dim)
 
         init_modules(self.modules(), w_init="xavier_uniform")
 
-    def forward(self, ans_candidates_tokens, ans_candidates_attention_mask, ans_candidates_token_type_ids, video_appearance_feat, question_tokens,question_attention_masks,question_token_type_ids):
+    def forward(self, ans_candidates_tokens, ans_candidates_attention_mask, ans_candidates_token_type_ids, video_appearance_feat,
+                question_tokens,question_attention_masks,question_token_type_ids,
+               subtitles_tokens,subtitles_attention_mask, subtitles_token_type_ids):
         """
         Args:
             ans_candidates: [Tensor] (batch_size, 5, max_ans_candidates_length)
@@ -671,6 +672,7 @@ class HCRNNetworkTVQA(nn.Module):
             logits.
         """
         batch_size = question_tokens.size(0)
+        video_motion_feat = torch.zeros(batch_size,video_appearance_feat.size(1),video_appearance_feat.size(3),device=video_appearance_feat.device)
         if self.question_type in ['frameqa', 'count', 'none']:
             # get image, word, and sentence embeddings
             question_embedding = self.linguistic_input_unit(question_tokens,question_attention_masks,question_token_type_ids)
@@ -686,8 +688,6 @@ class HCRNNetworkTVQA(nn.Module):
             q_visual_embedding = self.feature_aggregation(question_embedding, visual_embedding)
 
             # ans_candidates: (batch_size, num_choices, max_len)
-            ans_candidates_agg = ans_candidates.view(-1, ans_candidates.size(2))
-            ans_candidates_len_agg = ans_candidates_len.view(-1)
 
             batch_agg = np.reshape(
                 np.tile(np.expand_dims(np.arange(batch_size), axis=1), [1, 5]), [-1])
@@ -698,4 +698,5 @@ class HCRNNetworkTVQA(nn.Module):
             out = self.output_unit(question_embedding[batch_agg], q_visual_embedding[batch_agg],
                                    ans_candidates_embedding,
                                    a_visual_embedding)
+            out = out.view(batch_size,-1)
         return out
