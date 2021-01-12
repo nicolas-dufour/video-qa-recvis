@@ -589,7 +589,7 @@ class InputUnitVisualSubtitles(nn.Module):
         self.module_dim = module_dim
         self.activation = nn.ELU()
 
-    def forward(self, appearance_video_feat, motion_video_feat, question_embedding):
+    def forward(self, appearance_video_feat, question_embedding):
         """
         Args:
             appearance_video_feat: [Tensor] (batch_size, num_clips, num_frames, visual_inp_dim)
@@ -599,7 +599,7 @@ class InputUnitVisualSubtitles(nn.Module):
             encoded video feature: [Tensor] (batch_size, N, module_dim)
         """
         batch_size = appearance_video_feat.size(0)
-        motion_video_feat = torch.zeros()
+        motion_video_feat = torch.zeros((batch_size,appearance_video_feat.size(1),appearance_video_feat.size(3)))
         clip_level_crn_outputs = []
         question_embedding_proj = self.question_embedding_proj(question_embedding)
         for i in range(appearance_video_feat.size(1)):
