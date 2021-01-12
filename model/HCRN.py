@@ -365,7 +365,7 @@ class HCRNNetworkBert(nn.Module):
         self.question_type = question_type
         self.feature_aggregation = FeatureAggregation(module_dim)
 
-        if self.question_type in ['action', 'transition']:
+        if self.question_type in ['action', 'transition', 'tvqa']:
             self.linguistic_input_unit = InputUnitLinguisticTransformer(transformer_path = transformer_path, transformer_cache_dir=transformer_cache_dir, train_bert = train_bert, mult_embedding = mult_embedding)
             self.visual_input_unit = InputUnitVisual(k_max_frame_level=k_max_frame_level, k_max_clip_level=k_max_clip_level, spl_resolution=spl_resolution, vision_dim=vision_dim, module_dim=module_dim)
             self.output_unit = OutputUnitMultiChoices(module_dim=module_dim)
@@ -382,7 +382,7 @@ class HCRNNetworkBert(nn.Module):
 
         init_modules(self.modules(), w_init="xavier_uniform")
 
-    def forward(self, ans_candidates, ans_candidates_len, video_appearance_feat, video_motion_feat,
+    def forward(self, ans_candidates_tokens, ans_candidates_attention_mask, ans_candidates_token_type_ids, video_appearance_feat, video_motion_feat,
                 question_tokens,question_attention_masks,question_token_type_ids):
         """
         Args:
@@ -417,7 +417,7 @@ class HCRNNetworkBert(nn.Module):
             batch_agg = np.reshape(
                 np.tile(np.expand_dims(np.arange(batch_size), axis=1), [1, 5]), [-1])
 
-            ans_candidates_embedding = self.linguistic_input_unit(ans_candidates_agg, ans_candidates_len_agg)
+            ans_candidates_embedding = self.linguistic_input_unit(ans_candidates_tokens, ans_candidates_attention_mask, ans_candidates_token_type_ids)
 
             a_visual_embedding = self.feature_aggregation(ans_candidates_embedding, visual_embedding[batch_agg])
             out = self.output_unit(question_embedding[batch_agg], q_visual_embedding[batch_agg],
