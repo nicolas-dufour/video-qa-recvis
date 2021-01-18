@@ -527,7 +527,7 @@ class HCRNNetworkBertAblation(nn.Module):
 
         init_modules(self.modules(), w_init="xavier_uniform")
 
-    def forward(self, ans_candidates, ans_candidates_len, video_appearance_feat, video_motion_feat,
+    def forward(self, ans_candidates_tokens, ans_candidates_attention_mask, ans_candidates_token_type_ids, video_appearance_feat, video_motion_feat,
                 question_tokens,question_attention_masks,question_token_type_ids):
         """
         Args:
@@ -562,7 +562,7 @@ class HCRNNetworkBertAblation(nn.Module):
             batch_agg = np.reshape(
                 np.tile(np.expand_dims(np.arange(batch_size), axis=1), [1, 5]), [-1])
 
-            ans_candidates_embedding = self.linguistic_input_unit(ans_candidates_agg, ans_candidates_len_agg)
+            ans_candidates_embedding = self.linguistic_input_unit(ans_candidates_tokens, ans_candidates_attention_mask, ans_candidates_token_type_ids)
 
             a_visual_embedding = self.feature_aggregation(ans_candidates_embedding, visual_embedding[batch_agg])
             out = self.output_unit(question_embedding[batch_agg], q_visual_embedding[batch_agg],
@@ -574,14 +574,14 @@ class InputUnitVisualSubtitles(nn.Module):
     def __init__(self, k_max_frame_level, k_max_clip_level, spl_resolution, vision_dim, module_dim=512):
         super(InputUnitVisualSubtitles, self).__init__()
 
-        self.clip_level_motion_cond = CRN(module_dim, k_max_frame_level, k_max_frame_level, gating=False, spl_resolution=spl_resolution)
+        self.clip_level_sub_cond = CRN(module_dim, k_max_frame_level, k_max_frame_level, gating=False, spl_resolution=spl_resolution)
         self.clip_level_question_cond = CRN(module_dim, k_max_frame_level-2, k_max_frame_level-2, gating=True, spl_resolution=spl_resolution)
-        self.video_level_motion_cond = CRN(module_dim, k_max_clip_level, k_max_clip_level, gating=False, spl_resolution=spl_resolution)
+        self.video_level_sub_cond = CRN(module_dim, k_max_clip_level, k_max_clip_level, gating=False, spl_resolution=spl_resolution)
         self.video_level_question_cond = CRN(module_dim, k_max_clip_level-2, k_max_clip_level-2, gating=True, spl_resolution=spl_resolution)
 
-        self.sequence_encoder = nn.LSTM(vision_dim, module_dim, batch_first=True, bidirectional=False)
-        self.clip_level_motion_proj = nn.Linear(vision_dim, module_dim)
-        self.video_level_motion_proj = nn.Linear(module_dim, module_dim)
+        self.sequence_encoder = nn.LSTM(module_dim, module_dim, batch_first=True, bidirectional=False)
+        self.clip_level_sub_proj = nn.Linear(module_dim, module_dim)
+        self.video_level_sub_proj= nn.Linear(module_dim, module_dim)
         self.appearance_feat_proj = nn.Linear(vision_dim, module_dim)
 
         self.question_embedding_proj = nn.Linear(module_dim, module_dim)
@@ -589,7 +589,7 @@ class InputUnitVisualSubtitles(nn.Module):
         self.module_dim = module_dim
         self.activation = nn.ELU()
 
-    def forward(self, appearance_video_feat, motion_video_feat, question_embedding):
+    def forward(self, appearance_video_feat, subtitle_video_feat, question_embedding):
         """
         Args:
             appearance_video_feat: [Tensor] (batch_size, num_clips, num_frames, visual_inp_dim)
@@ -602,15 +602,15 @@ class InputUnitVisualSubtitles(nn.Module):
         clip_level_crn_outputs = []
         question_embedding_proj = self.question_embedding_proj(question_embedding)
         for i in range(appearance_video_feat.size(1)):
-            clip_level_motion = motion_video_feat[:, i, :]  # (bz, 2048)
-            clip_level_motion_proj = self.clip_level_motion_proj(clip_level_motion)
+            clip_level_subtitle = subtitle_video_feat[:, i, :]  # (bz, 2048)
+            clip_level_sub_proj = self.clip_level_sub_proj(clip_level_subtitle)
 
             clip_level_appearance = appearance_video_feat[:, i, :, :]  # (bz, 16, 2048)
-            clip_level_appearance_proj = self.appearance_feat_proj(clip_level_appearance)  # (bz, 16, 512)
+            clip_level_appearance_proj = self.appearance_feat_proj(clip_level_appearance) # (bz, 16, 512)
             # clip level CRNs
-            clip_level_crn_motion = self.clip_level_motion_cond(torch.unbind(clip_level_appearance_proj, dim=1),
-                                                                clip_level_motion_proj)
-            clip_level_crn_question = self.clip_level_question_cond(clip_level_crn_motion, question_embedding_proj)
+            clip_level_crn_sub = self.clip_level_sub_cond(torch.unbind(clip_level_appearance_proj, dim=1),
+                                                                clip_level_sub_proj)
+            clip_level_crn_question = self.clip_level_question_cond(clip_level_crn_sub, question_embedding_proj)
 
             clip_level_crn_output = torch.cat(
                 [frame_relation.unsqueeze(1) for frame_relation in clip_level_crn_question],
@@ -619,11 +619,11 @@ class InputUnitVisualSubtitles(nn.Module):
             clip_level_crn_outputs.append(clip_level_crn_output)
 
         # Encode video level motion
-        _, (video_level_motion, _) = self.sequence_encoder(motion_video_feat)
-        video_level_motion = video_level_motion.transpose(0, 1)
-        video_level_motion_feat_proj = self.video_level_motion_proj(video_level_motion)
+        _, (video_level_subtitle, _) = self.sequence_encoder(subtitle_video_feat.float())
+        video_level_subtitle = video_level_subtitle.transpose(0, 1)
+        video_level_subtitle_feat_proj = self.video_level_sub_proj(video_level_subtitle)
         # video level CRNs
-        video_level_crn_motion = self.video_level_motion_cond(clip_level_crn_outputs, video_level_motion_feat_proj)
+        video_level_crn_motion = self.video_level_sub_cond(clip_level_crn_outputs, video_level_subtitle_feat_proj)
         video_level_crn_question = self.video_level_question_cond(video_level_crn_motion,
                                                                   question_embedding_proj.unsqueeze(1))
 
@@ -641,20 +641,28 @@ class HCRNNetworkTVQA(nn.Module):
         self.feature_aggregation = FeatureAggregation(module_dim)
 
         if self.question_type in ['action', 'transition', 'tvqa']:
-            self.linguistic_input_unit = InputUnitLinguisticTransformer(transformer_path = transformer_path, transformer_cache_dir=transformer_cache_dir, train_bert = train_bert, mult_embedding = mult_embedding)
-            self.visual_input_unit = InputUnitVisualSubtitles(k_max_frame_level=k_max_frame_level, k_max_clip_level=k_max_clip_level, spl_resolution=spl_resolution, vision_dim=vision_dim, module_dim=module_dim)
+            self.linguistic_input_unit = InputUnitLinguisticTransformer(transformer_path = transformer_path, transformer_cache_dir=transformer_cache_dir, train_bert = train_bert,
+                                                                        mult_embedding = mult_embedding)
+            self.visual_input_unit = InputUnitVisualSubtitles(k_max_frame_level=k_max_frame_level, k_max_clip_level=k_max_clip_level, spl_resolution=spl_resolution, vision_dim=vision_dim,
+                                                              module_dim=module_dim)
             self.output_unit = OutputUnitMultiChoices(module_dim=module_dim)
 
         elif self.question_type == 'count':
-            self.linguistic_input_unit = InputUnitLinguisticTransformer(transformer_path = transformer_path,transformer_cache_dir=transformer_cache_dir, train_bert = train_bert, mult_embedding = mult_embedding)
-            self.visual_input_unit = InputUnitVisualSubtitles(k_max_frame_level=k_max_frame_level, k_max_clip_level=k_max_clip_level, spl_resolution=spl_resolution, vision_dim=vision_dim, module_dim=module_dim)
+            self.linguistic_input_unit = InputUnitLinguisticTransformer(transformer_path = transformer_path,transformer_cache_dir=transformer_cache_dir, train_bert = train_bert,
+                                                                        mult_embedding = mult_embedding)
+            self.visual_input_unit = InputUnitVisualSubtitles(k_max_frame_level=k_max_frame_level, k_max_clip_level=k_max_clip_level, spl_resolution=spl_resolution, vision_dim=vision_dim,
+                                                              module_dim=module_dim)
             self.output_unit = OutputUnitCount(module_dim=module_dim)
         else:
             self.num_classes = len(vocab['answer_token_to_idx'])
-            self.linguistic_input_unit = InputUnitLinguisticTransformer(transformer_path = transformer_path,transformer_cache_dir=transformer_cache_dir, train_bert = train_bert, mult_embedding = mult_embedding)
-            self.visual_input_unit = InputUnitVisualSubtitles(k_max_frame_level=k_max_frame_level, k_max_clip_level=k_max_clip_level, spl_resolution=spl_resolution, vision_dim=vision_dim, module_dim=module_dim)
+            self.linguistic_input_unit = InputUnitLinguisticTransformer(transformer_path = transformer_path,transformer_cache_dir=transformer_cache_dir, train_bert = train_bert,
+                                                                        mult_embedding = mult_embedding)
+            self.visual_input_unit = InputUnitVisualSubtitles(k_max_frame_level=k_max_frame_level, k_max_clip_level=k_max_clip_level, spl_resolution=spl_resolution, vision_dim=vision_dim,
+                                                              module_dim=module_dim)
             self.output_unit = OutputUnitOpenEnded(num_answers=self.num_classes,module_dim=module_dim)
-
+            
+    
+        
         init_modules(self.modules(), w_init="xavier_uniform")
 
     def forward(self, ans_candidates_tokens, ans_candidates_attention_mask, ans_candidates_token_type_ids, video_appearance_feat,
@@ -672,18 +680,27 @@ class HCRNNetworkTVQA(nn.Module):
             logits.
         """
         batch_size = question_tokens.size(0)
-        video_motion_feat = torch.zeros(batch_size,video_appearance_feat.size(1),video_appearance_feat.size(3),device=video_appearance_feat.device)
         if self.question_type in ['frameqa', 'count', 'none']:
             # get image, word, and sentence embeddings
             question_embedding = self.linguistic_input_unit(question_tokens,question_attention_masks,question_token_type_ids)
-            visual_embedding = self.visual_input_unit(video_appearance_feat, video_motion_feat, question_embedding)
+            video_subtitle_feat = []
+            for i in range(subtitles_tokens.size(1)):
+                video_subtitle_feat.append(self.linguistic_input_unit(subtitles_tokens[:,i,:],subtitles_attention_mask[:,i,:], subtitles_token_type_ids[:,i,:]))
+            video_subtitle_feat = torch.stack(video_subtitle_feat,dim=1)
+            
+            visual_embedding = self.visual_input_unit(video_appearance_feat, video_subtitle_feat, question_embedding)
 
             visual_embedding = self.feature_aggregation(question_embedding, visual_embedding)
 
             out = self.output_unit(question_embedding, visual_embedding)
         else:
             question_embedding = self.linguistic_input_unit(question_tokens,question_attention_masks,question_token_type_ids)
-            visual_embedding = self.visual_input_unit(video_appearance_feat, video_motion_feat, question_embedding)
+            video_subtitle_feat = []
+            for i in range(subtitles_tokens.size(1)):
+                video_subtitle_feat.append(self.linguistic_input_unit(subtitles_tokens[:,i,:],subtitles_attention_mask[:,i,:], subtitles_token_type_ids[:,i,:]))
+            video_subtitle_feat = torch.stack(video_subtitle_feat).view(8,batch_size,-1).transpose(1,0)
+            
+            visual_embedding = self.visual_input_unit(video_appearance_feat, video_subtitle_feat, question_embedding)
 
             q_visual_embedding = self.feature_aggregation(question_embedding, visual_embedding)
 
@@ -691,8 +708,11 @@ class HCRNNetworkTVQA(nn.Module):
 
             batch_agg = np.reshape(
                 np.tile(np.expand_dims(np.arange(batch_size), axis=1), [1, 5]), [-1])
-
-            ans_candidates_embedding = self.linguistic_input_unit(ans_candidates_tokens, ans_candidates_attention_mask, ans_candidates_token_type_ids)
+            
+            ans_candidates_embedding = []
+            for i in range(ans_candidates_tokens.size(1)):
+                ans_candidates_embedding.append(self.linguistic_input_unit(ans_candidates_tokens[:,i,:],ans_candidates_attention_mask[:,i,:], ans_candidates_token_type_ids[:,i,:]))
+            ans_candidates_embedding = torch.stack(ans_candidates_embedding).view(5,batch_size,-1).transpose(1,0).reshape(5*batch_size,-1)
 
             a_visual_embedding = self.feature_aggregation(ans_candidates_embedding, visual_embedding[batch_agg])
             out = self.output_unit(question_embedding[batch_agg], q_visual_embedding[batch_agg],

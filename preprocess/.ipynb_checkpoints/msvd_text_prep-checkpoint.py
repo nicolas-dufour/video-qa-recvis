@@ -53,7 +53,7 @@ def create_vocab(train_annotation_json,vocab_path=None,answer_top=4000):
     return vocab
 
     
-def process_questions(train_csv, val_csv, test_csv, fine_tune_out_path, train_output, val_output, test_output,vocab_path=None,wandb_log=True):
+def process_questions(train_csv, val_csv, test_csv, train_output, val_output, test_output, fine_tune_out_path=None, vocab_path=None,train_json=None,wandb_log=True):
     ''' Encode question tokens'''
     print('Loading tokenizer')
     tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
@@ -73,7 +73,7 @@ def process_questions(train_csv, val_csv, test_csv, fine_tune_out_path, train_ou
         with open(vocab_path, 'r') as f:
             vocab = json.load(f)
     else:
-        vocab = create_vocab(train_annotation_json)
+        vocab = create_vocab(train_json)
         
     print('Tokenizing answers')
     
@@ -86,9 +86,10 @@ def process_questions(train_csv, val_csv, test_csv, fine_tune_out_path, train_ou
             'question_id': instance['id'],
             'question_tokens': instance['input_ids'],
             'question_attention_mask': instance['attention_mask'],
-            'question_token_type_ids': instance['token_type_ids']},
+            'question_token_type_ids': instance['token_type_ids'],
+            'video_ids': instance['video_id']},
         batched=True,
-        remove_columns=['id','input_ids','attention_mask','token_type_ids'])
+        remove_columns=['id','input_ids','attention_mask','token_type_ids','video_id'])
     
     print('Saving datasets')
     
@@ -101,42 +102,42 @@ def process_questions(train_csv, val_csv, test_csv, fine_tune_out_path, train_ou
     with open(test_output, 'wb') as f:
         pickle.dump(tokenized_datasets['test'], f)
     
-    print('Finetuning Masked LM Bert model with train questions')
+#     print('Finetuning Masked LM Bert model with train questions')
     
-    model = BertForMaskedLM.from_pretrained('bert-base-uncased')
+#     model = BertForMaskedLM.from_pretrained('bert-base-uncased')
     
-    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm_probability=0.15)
+#     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm_probability=0.15)
     
-    training_args = TrainingArguments(
-        'test-clm',
-        per_device_train_batch_size = 64,
-        evaluation_strategy = "epoch",
-        learning_rate=2e-5,
-        weight_decay=0.01
-    )
+#     training_args = TrainingArguments(
+#         'test-clm',
+#         per_device_train_batch_size = 64,
+#         evaluation_strategy = "epoch",
+#         learning_rate=2e-5,
+#         weight_decay=0.01
+#     )
     
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=model_training_datasets["train"],
-        eval_dataset=model_training_datasets["val"],
-        data_collator=data_collator
-    )
-    if(wandb_log):
-        import wandb
-        perplexity_pretrained_train = trainer.evaluate(model_training_datasets["train"])['eval_loss']
-        wandb.log({'hf_perplexity_train': perplexity_pretrained_train})
-        perplexity_pretrained_val= trainer.evaluate(model_training_datasets["val"])['eval_loss']
-        wandb.log({'hf_perplexity_val': perplexity_pretrained_val})
-    trainer.train()
-    eval_perplexity = trainer.evaluate()['eval_loss']
-    print(f"Model finetuned with validation perpexity of {eval_perplexity}")
-    if(wandb_log):
-        perplexity_finetuned_train = trainer.evaluate(model_training_datasets["train"])['eval_loss']
-        wandb.log({'finetuned_perplexity_train': perplexity_finetuned_train})
-        perplexity_finetuned_val = trainer.evaluate(model_training_datasets["val"])['eval_loss']
-        wandb.log({'finetuned_perplexity_val': perplexity_finetuned_val})
+#     trainer = Trainer(
+#         model=model,
+#         args=training_args,
+#         train_dataset=model_training_datasets["train"],
+#         eval_dataset=model_training_datasets["val"],
+#         data_collator=data_collator
+#     )
+#     if(wandb_log):
+#         import wandb
+#         perplexity_pretrained_train = trainer.evaluate(model_training_datasets["train"])['eval_loss']
+#         wandb.log({'hf_perplexity_train': perplexity_pretrained_train})
+#         perplexity_pretrained_val= trainer.evaluate(model_training_datasets["val"])['eval_loss']
+#         wandb.log({'hf_perplexity_val': perplexity_pretrained_val})
+#     trainer.train()
+#     eval_perplexity = trainer.evaluate()['eval_loss']
+#     print(f"Model finetuned with validation perpexity of {eval_perplexity}")
+#     if(wandb_log):
+#         perplexity_finetuned_train = trainer.evaluate(model_training_datasets["train"])['eval_loss']
+#         wandb.log({'finetuned_perplexity_train': perplexity_finetuned_train})
+#         perplexity_finetuned_val = trainer.evaluate(model_training_datasets["val"])['eval_loss']
+#         wandb.log({'finetuned_perplexity_val': perplexity_finetuned_val})
    
-    print('Saving Model')
+#     print('Saving Model')
     
-    model.save_pretrained(save_directory=fine_tune_out_path)
+#     model.save_pretrained(save_directory=fine_tune_out_path)

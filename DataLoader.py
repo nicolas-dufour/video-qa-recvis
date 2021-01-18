@@ -571,9 +571,9 @@ def collate_batch_tvqa_transformer(batch):
         question_idx_batch,
         torch.LongTensor(answer_batch),
 
-        pad_sequence(ans_candidates_tokens_batch, batch_first=True, padding_value=0),
-        pad_sequence(ans_candidates_attention_masks_batch, batch_first=True, padding_value=0),
-        pad_sequence(ans_candidates_token_type_ids_batch, batch_first=True, padding_value=0),
+        pad_sequence(ans_candidates_tokens_batch, batch_first=True, padding_value=0).view(batch_size,5,-1),
+        pad_sequence(ans_candidates_attention_masks_batch, batch_first=True, padding_value=0).view(batch_size,5,-1),
+        pad_sequence(ans_candidates_token_type_ids_batch, batch_first=True, padding_value=0).view(batch_size,5,-1),
 
         torch.stack(appearance_feat_batch),
 
@@ -581,9 +581,9 @@ def collate_batch_tvqa_transformer(batch):
         pad_sequence(question_attention_masks_batch, batch_first=True, padding_value=0),
         pad_sequence(question_token_type_ids_batch, batch_first=True, padding_value=0),
 
-        pad_sequence(subtitles_tokens_batch, batch_first=True, padding_value=0),
-        pad_sequence(subtitles_attention_masks_batch, batch_first=True, padding_value=0),
-        pad_sequence(subtitles_token_type_ids_batch, batch_first=True, padding_value=0)
+        pad_sequence(subtitles_tokens_batch, batch_first=True, padding_value=0).view(batch_size,8,-1),
+        pad_sequence(subtitles_attention_masks_batch, batch_first=True, padding_value=0).view(batch_size,8,-1),
+        pad_sequence(subtitles_token_type_ids_batch, batch_first=True, padding_value=0).view(batch_size,8,-1)
     )
 
 class TVQADataModule(pl.LightningDataModule):
