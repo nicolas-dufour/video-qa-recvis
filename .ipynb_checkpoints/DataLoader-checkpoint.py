@@ -455,7 +455,7 @@ class TVQADataset(Dataset):
         
         ans_candidates_tokens = [torch.zeros(2) for _ in range(5)]
         ans_candidates_attention_mask = [torch.zeros(2) for _ in range(5)]
-        ans_candidates_token_type_ids = [torch.zeros(2) for _ in range(8)]
+        ans_candidates_token_type_ids = [torch.zeros(2) for _ in range(5)]
         
         question_tokens = torch.LongTensor(self.questions_dataset[index]['question_tokens'])
         question_attention_masks = torch.LongTensor(self.questions_dataset[index]['question_attention_mask'])
@@ -465,7 +465,7 @@ class TVQADataset(Dataset):
         else:
             question_token_type_ids = torch.zeros(5)
         
-        if('a0_token_type_ids' in self.questions_dataset.column_names):
+        if('a0_tokens' in self.questions_dataset.column_names):
             ans_candidates_tokens=[]
             ans_candidates_attention_mask = []
             if(self.has_token_type_ids):
@@ -498,6 +498,7 @@ class TVQADataset(Dataset):
         app_index = self.app_feat_id_to_index[str(video_idx)]
         
         appearance_feat = self.f_app[app_index]  # (8, 16, 2048)
+        
 
         return (
             video_idx, question_idx,
@@ -589,7 +590,7 @@ def collate_batch_tvqa_transformer(batch):
 class TVQADataModule(pl.LightningDataModule):
     def __init__(self, data_path,dataset_name,batch_size,text_embedding_model,num_workers =8):
         super().__init__()
-        if(text_embedding_model=='bert' or text_embedding_model=='roberta' or text_embedding_model=='distillbert'):
+        if(text_embedding_model=='bert' or text_embedding_model=='roberta' or text_embedding_model=='distilbert'):
             self.text_embedding_method = 'transformer'
         else:
             raise "Text embedding method not supported"

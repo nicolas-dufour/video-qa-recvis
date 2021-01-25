@@ -173,12 +173,12 @@ def partition_subtitle(subtitle,nb_clips,tokenizer):
             if get_overlap(segment_interval, intervals[i]):
                 sub_clips[i].append(segment.text)
     for i in range(nb_clips):
-        sub_clips[i] = tokenizer(clean_sub_str(''.join(sub_clips[i])))
+        sub_clips[i] = tokenizer(clean_sub_str(''.join(sub_clips[i])),truncation=True)
     return sub_clips
 
 def process_subs(subtitles_folder,output_file,model_name='bert-base-uncased'):
     tokenized_subs = {}
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    tokenizer = AutoTokenizer.from_pretrained(model_name,model_max_length= 128,additional_special_tokens= ["[SPKR]"])
     nb_clips = 8
     for clip in tqdm(os.listdir(subtitles_folder)):
         path = os.path.join(subtitles_folder, clip)
