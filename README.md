@@ -1,5 +1,5 @@
 # Video Question Answering with HCRN
-Final project on video question answering for the Master MVA Recvis 2020/2021 class.
+Final project on video question answering for the Master MVA Recvis 2020/2021 class. The idea is that given a video, we are able to automaticaly answer questions about what is happening in the video.
 
 This project is based on the paper <a href='https://arxiv.org/abs/2002.10698'>"Conditional Relation Networks
 for Video Question Answering"</a>. Le et al 2020
